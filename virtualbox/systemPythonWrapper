@@ -1,0 +1,53 @@
+#!/usr/bin/env python
+
+# this script is to pivot virtualbox commands to the local system version of python, which
+# in theory the virtual box XCOM libraries are set up for
+
+# take the command and paramaters in from the commandline
+# print the result on stdout
+
+# use  magic to designate the  beginning of the output, so the reader dosen't get Confused
+
+MAGIC_LOCATOR = '\x01DATA\x02'
+
+import sys
+import pickle
+
+sys.path.insert( 1,  '../..' )
+
+from subcontractor_plugins.virtualbox.lib import create, create_rollback, destroy, power_on, power_off, power_status
+
+data = pickle.loads( sys.stdin.read() )
+
+try:
+  function_name = data[ 'function' ]
+  paramaters = data[ 'paramaters' ]
+except KeyError:
+  print( 'Unable to get function and paramaters from data' )
+  sys.exit( 1 )
+
+if function_name == 'create':
+  result = create( paramaters )
+
+elif function_name == 'create_rollback':
+  result = create_rollback( paramaters )
+
+elif function_name == 'destroy':
+  result = destroy( paramaters )
+
+elif function_name == 'power_on':
+  result = power_on( paramaters )
+
+elif function_name == 'power_off':
+  result = power_off( paramaters )
+
+elif function_name == 'power_status':
+  result = power_status( paramaters )
+
+else:
+  print( 'Unknown function "{0}"'.format( function_name ) )
+  sys.exit( 1 )
+
+print( MAGIC_LOCATOR + pickle.dumps( result, 0 ) )
+
+sys.exit( 0 )
