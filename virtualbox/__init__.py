@@ -41,8 +41,16 @@ else:
       raise ValueError( 'MAGIC_LOCATOR not found in output' )
 
     logging.debug( 'virtualbox subproc: output:\n{0}'.format( result[ :pos ] ) )
-    result = pickle.loads( result[ pos + len( MAGIC_LOCATOR ): ] )
+    try:
+      result = pickle.loads( result[ pos + len( MAGIC_LOCATOR ): ] )
+    except Exception as e:
+      raise Exception( 'Exception unpickleing result "{0}"({1})'.format( e, type( e ).__name__ ) )
+
+    if isinstance( result, Exception ):
+      raise result
+
     logging.debug( 'virtualbox subproc: result: "{0}"'.format( result ) )
+
     return result
 
   MODULE_FUNCTIONS = {

@@ -8,46 +8,68 @@
 
 # use  magic to designate the  beginning of the output, so the reader dosen't get Confused
 
-MAGIC_LOCATOR = '\x01DATA\x02'
-
 import sys
-import pickle
 
 sys.path.insert( 1,  '../..' )
 
 from subcontractor_plugins.virtualbox.lib import create, create_rollback, destroy, power_on, power_off, power_status
 
+import pickle
+import logging
+
+MAGIC_LOCATOR = '\x01DATA\x02'
+
+logging.basicConfig()
+logger = logging.getLogger()
+logger.setLevel( logging.DEBUG )
+
+logging.info( 'systemPythonWrapper: starting' )
+
+logging.debug( 'systemPythonWrapper: reading request' )
 data = pickle.loads( sys.stdin.read() )
 
+logging.debug( 'systemPythonWrapper: request: {0}'.format( data ) )
 try:
   function_name = data[ 'function' ]
   paramaters = data[ 'paramaters' ]
 except KeyError:
-  print( 'Unable to get function and paramaters from data' )
+  logging.error( 'systemPythonWrapper: Unable to get function and paramaters from data' )
   sys.exit( 1 )
 
-if function_name == 'create':
-  result = create( paramaters )
+try:
+  if function_name == 'create':
+    result = create( paramaters )
 
-elif function_name == 'create_rollback':
-  result = create_rollback( paramaters )
+  elif function_name == 'create_rollback':
+    result = create_rollback( paramaters )
 
-elif function_name == 'destroy':
-  result = destroy( paramaters )
+  elif function_name == 'destroy':
+    result = destroy( paramaters )
 
-elif function_name == 'power_on':
-  result = power_on( paramaters )
+  elif function_name == 'power_on':
+    result = power_on( paramaters )
 
-elif function_name == 'power_off':
-  result = power_off( paramaters )
+  elif function_name == 'power_off':
+    result = power_off( paramaters )
 
-elif function_name == 'power_status':
-  result = power_status( paramaters )
+  elif function_name == 'power_status':
+    result = power_status( paramaters )
 
-else:
-  print( 'Unknown function "{0}"'.format( function_name ) )
-  sys.exit( 1 )
+  else:
+    print( 'Unknown function "{0}"'.format( function_name ) )
+    sys.exit( 1 )
 
-print( MAGIC_LOCATOR + pickle.dumps( result, 0 ) )
+except Exception as e:
+  logging.exception( 'systemPythonWrapper: error executing function "{0}"({1})'.format( e, type( e ).__name__ ) )
+  logging.shutdown()
+  # unforntuntally what ever unpickles this will not have access to the right namespace, so it will probably not unpickle the oritional e
+  e = Exception( '{0}({1})'.format( str( e ), type( e ).__name__ ) )
+  print( MAGIC_LOCATOR + pickle.dumps( e, 0 ) )
+  sys.exit( 0 ) # yes there was an error, but we are wrapping it ip so upstream can deal with it beter
+
+logging.info( 'systemPythonWrapper: sending results' )
+logging.shutdown()
+
+print( MAGIC_LOCATOR + pickle.dumps( result, 0 ) ) # can not print anything after this line
 
 sys.exit( 0 )
