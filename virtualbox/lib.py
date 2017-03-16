@@ -10,6 +10,7 @@ CREATE_GROUPS = []
 CREATE_FLAGS = ''
 CREATE_OS_TYPE_ID = 'Ubuntu_64'
 
+
 def create( paramaters ):
   vm_name = paramaters[ 'name' ]
   logging.info( 'virtualbox: creating vm "{0}"'.format( vm_name ) )
@@ -71,6 +72,7 @@ def create( paramaters ):
 
   return { 'done': True, 'uuid': vm.hardware_uuid }
 
+
 def create_rollback( paramaters ):
   vm_name = paramaters[ 'name' ]
   logging.info( 'virtualbox: rolling back vm "{0}"'.format( vm_name ) )
@@ -111,78 +113,79 @@ def create_rollback( paramaters ):
   logging.info( 'virtualbox: vm "{0}" rolledback'.format( vm_name ) )
   return { 'rollback_done': True }
 
+
 def destroy( paramaters ):
+  vm_uuid = paramaters[ 'uuid' ]
   vm_name = paramaters[ 'name' ]
   logging.info( 'virtualbox: destroying vm "{0}"'.format( vm_name ) )
   vbox = virtualbox.VirtualBox()
 
   try:
-    vm = vbox.find_machine( vm_name )
+    vm = vbox.find_machine( vm_uuid )
   except virtualbox.library.VBoxErrorObjectNotFound:
     return { 'done': True } # it's gone, we are donne
 
   media = vm.unregister( virtualbox.library.CleanupMode.detach_all_return_hard_disks_only )
   progress = vm.delete_config( media )
   while not progress.completed:
-    logging.debug( 'virtualbox: deleting config "{0}" power on at {1}%, {2} seconds left'.format( vm_name, progress.percent, progress.time_remaining ) )
+    logging.debug( 'virtualbox: deleting config "{0}"({1}) at {2}%, {3} seconds left'.format( vm_name, vm_uuid, progress.percent, progress.time_remaining ) )
     time.sleep( 1 )
 
   logging.info( 'virtualbox: vm "{0}" destroyed'.format( vm_name ) )
   return { 'done': True }
 
-def power_on( paramaters ):
-  vm_name = paramaters[ 'name' ]
-  logging.info( 'virtualbox: powering on "{0}"...'.format( vm_name ) )
-  vbox = virtualbox.VirtualBox()
 
-  vm = vbox.find_machine( vm_name )
-
-  progress = vm.launch_vm_process()
-
-  while not progress.completed:
-    logging.debug( 'virtualbox: vm "{0}" power on at {1}%, {2} seconds left'.format( vm_name, progress.percent, progress.time_remaining ) )
-    time.sleep( 1 )
-
-  logging.info( 'virtualbox: power on "{0}" complete'.format( vm_name ) )
-  return { 'done': True }
-
-def power_off( paramaters ):
-  vm_name = paramaters[ 'name' ]
-  logging.info( 'virtualbox: powering off "{0}"...'.format( vm_name ) )
-  vbox = virtualbox.VirtualBox()
-
-  vm = vbox.find_machine( vm_name )
-
-  console.power_button()
-
-  for _  in range( 0, CLEAN_POWER_DOWN_COUNT ):
-    if vm.state == virtualbox.library.MachineState.powered_off:
-      logging.info( 'virtualbox: clean shutdown on "{0}" complete'.format( vm_name ) )
-      return { 'done': True }
-
-    time.sleep( 1 )
-
-  progress = console.power_down()
-  while not progress.completed:
-    logging.debug( 'virtualbox: vm "{0}" power off at {1}%, {2} seconds left'.format( vm_name, progress.percent, progress.time_remaining ) )
-    time.sleep( 1 )
-
-  logging.info( 'virtualbox: power off "{0}" complete'.format( vm_name ) )
-  return { 'done': True }
-
-def power_status( paramaters ):
-  vm_name = paramaters[ 'name' ]
-  logging.info( 'virtualbox: getting "{0}" power status...'.format( vm_name ) )
-  vbox = virtualbox.VirtualBox()
-
-  vm = vbox.find_machine( vm_name )
-
-  state = vm.state
+def _power_state_convert( state ):
   if state in ( virtualbox.library.MachineState.powered_off, virtualbox.library.MachineState.saved ):
-    return { 'state': 'off' }
+    return 'off'
 
   elif state in ( virtualbox.library.MachineState.running, virtualbox.library.MachineState.starting, virtualbox.library.MachineState.stopping ):
-    return { 'state': 'off' }
+    return 'on'
 
   else:
-    return { 'state': 'unknown {0}'.format( state ) }
+    return 'unknown "{0}"'.format( state )
+
+
+def set_power( paramaters ):
+  vm_uuid = paramaters[ 'uuid' ]
+  vm_name = paramaters[ 'name' ]
+  desired_state = paramaters[ 'state' ]
+  logging.info( 'virtualbox: setting power state of "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, desired_state ) )
+  vbox = virtualbox.VirtualBox()
+
+  vm = vbox.find_machine( vm_name )
+
+  curent_state = _power_state_convert( vm.state )
+  if curent_state == desired_state or ( curent_state == 'off' and desired_state == 'soft_off' ):
+    return { 'state': curent_state }
+
+  session = None
+  if desired_state in ( 'off', 'soft_off' ):
+    session = vm.create_session()
+
+  progress = None
+  if desired_state == 'on':
+    progress = vm.launch_vm_process()
+  elif desired_state == 'off':
+    session.console.power_down()
+  elif desired_state == 'soft_off':
+    progress = session.console.power_button()
+
+  if progress is not None:
+    while not progress.completed:
+      logging.debug( 'virtualbox: vm "{0}"({1}) power on at {2}%, {3} seconds left'.format( vm_name, vm_uuid, progress.percent, progress.time_remaining ) )
+      time.sleep( 1 )
+
+  logging.info( 'virtualbox: setting power state of "{0}"({1}) to "{2}" complete'.format( vm_name, vm_uuid, desired_state ) )
+  return { 'state': _power_state_convert( vm.state ) }
+
+
+def power_state( paramaters ):
+  vm_uuid = paramaters[ 'uuid' ]
+  vm_name = paramaters[ 'name' ]
+  logging.info( 'virtualbox: getting "{0}"({1}) power state...'.format( vm_name, vm_uuid ) )
+  vbox = virtualbox.VirtualBox()
+
+  vm = vbox.find_machine( vm_uuid )
+
+  return { 'state': _power_state_convert( vm.state ) }

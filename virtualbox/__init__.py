@@ -9,15 +9,14 @@ except:
 MODULE_NAME = 'virtualbox'
 
 if native_virtualbox:
-  from subcontractor_plugins.virtualbox.lib import create, create_rollback, destroy, power_on, power_off, power_status
+  from subcontractor_plugins.virtualbox.lib import create, create_rollback, destroy, set_power, power_state
 
   MODULE_FUNCTIONS = {
                        'create': create,
                        'create_rollback': create_rollback,
                        'destroy': destroy,
-                       'power_on': power_on,
-                       'power_off': power_off,
-                       'power_status': power_status
+                       'set_power': set_power,
+                       'power_state': power_state
                      }
 
 else:
@@ -57,7 +56,6 @@ else:
                      'create': lambda paramaters: python_wrap( 'create', paramaters ),
                      'create_rollback': lambda paramaters: python_wrap( 'create_rollback', paramaters ),
                      'destroy': lambda paramaters: python_wrap( 'destroy', paramaters ),
-                     'power_on': lambda paramaters: python_wrap( 'power_on', paramaters ),
-                     'power_off': lambda paramaters: python_wrap( 'power_off', paramaters ),
-                     'power_status': lambda paramaters: python_wrap( 'power_status', paramaters )
+                     'set_power': lambda paramaters: python_wrap( 'set_power', paramaters ),
+                     'power_state': lambda paramaters: python_wrap( 'power_state', paramaters )
                    }
