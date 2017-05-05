@@ -1,7 +1,8 @@
 import socket
 import logging
 
-from pyping import ping
+from subcontractor_plugins.iputils.pyping import ping
+
 
 def ping( paramaters ):
   target = paramaters[ 'target' ]
@@ -13,6 +14,7 @@ def ping( paramaters ):
 
   logging.info( 'iputils: pinged "{0}", send: "{1}" recieved "{2}"'.format( target, pinger.send_count, pinger.receive_count ) )
   return { 'result': ( pinger.receive_count * 100.0 ) / pinger.send_count }
+
 
 def port_state( paramaters ):
   target = paramaters[ 'target' ]
@@ -29,7 +31,7 @@ def port_state( paramaters ):
   except socket.error:
     state = 'closed'
   except Exception as e:
-    state = 'exception: "{0}"({1})'.format( str( e ), type( e ).__name__
+    state = 'exception: "{0}"({1})'.format( str( e ), type( e ).__name__ )
 
   logging.info( 'iputils: checking port "{0}" on "{1}" is "{2}"'.format( port, target, state ) )
   return { 'result': state }

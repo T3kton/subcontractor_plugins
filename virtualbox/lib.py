@@ -10,6 +10,8 @@ CREATE_GROUPS = []
 CREATE_FLAGS = ''
 CREATE_OS_TYPE_ID = 'Ubuntu_64'
 
+BOOT_ORDER_MAP = { 'hdd': virtualbox.library.DeviceType.hard_disk, 'net': virtualbox.library.DeviceType.network, 'cd': virtualbox.library.DeviceType.dvd, 'usb': virtualbox.library.DeviceType.usb }
+
 
 def create( paramaters ):
   vm_name = paramaters[ 'name' ]
@@ -18,7 +20,7 @@ def create( paramaters ):
 
   settings_file = vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties.default_machine_folder )
   vm = vbox.create_machine( settings_file, vm_name, CREATE_GROUPS, CREATE_OS_TYPE_ID, CREATE_FLAGS )
-  vm.memory_size = int( paramaters.get( 'memory_size', 512 ) ) # in Meg
+  vm.memory_size = int( paramaters.get( 'memory_size', 512 ) )  # in Meg
 
   disk_controller_name = 'SCSI'
   vm.add_storage_controller( disk_controller_name, virtualbox.library.StorageBus.scsi )
@@ -31,6 +33,13 @@ def create( paramaters ):
 
   session = vm.create_session( virtualbox.library.LockType.write )
   vm2 = session.machine
+
+  for i in range( 0, vbox.system_properties.max_boot_position  ):
+    vm2.set_boot_order( i + 1, virtualbox.library.DeviceType.null )
+
+  for i in range( 0, 4 ):
+    adapter = vm2.get_network_adapter( i  )
+    adapter.enabled = False
 
   disk_port = 0
   cd_port = 0
@@ -51,7 +60,7 @@ def create( paramaters ):
         disk_port += 1
 
     else:
-      disk_size = int( disk[ 'size' ] ) * 1024 * 1024 * 1024 # disk_size is in bytes, we were pass in G
+      disk_size = int( disk[ 'size' ] ) * 1024 * 1024 * 1024  # disk_size is in bytes, we were pass in G
       disk_format = 'vdi'
       location = '{0}/{1}.vdi'.format( os.path.dirname( vm.settings_file_path ), disk_name )
       medium = vbox.create_medium( disk_format, location, virtualbox.library.AccessMode.read_write, virtualbox.library.DeviceType.hard_disk )
@@ -65,6 +74,39 @@ def create( paramaters ):
 
       vm2.attach_device( disk_controller_name, disk_port, 0, virtualbox.library.DeviceType.hard_disk, medium )
       disk_port += 1
+
+  for i in range( 0, 4 ):
+    if i < len( paramaters[ 'interface_list' ] ):
+      iface = paramaters[ 'interface_list' ][ i ]
+      adapter = vm2.get_network_adapter( i )
+      adapter.enabled = True
+      adapter.mac = iface[ 'mac' ]
+
+      if iface[ 'type' ] == 'host':
+        adapter.attachment_type = virtualbox.library.NetworkAttachmentType.host_only
+        adapter.host_only_interface = iface[ 'name' ]
+
+      elif iface[ 'type' ] == 'bridge':
+        adapter.attachment_type = virtualbox.library.NetworkAttachmentType.bridged
+        adapter.bridged_interface = iface[ 'name' ]
+
+      elif iface[ 'type' ] == 'nat':
+        adapter.attachment_type = virtualbox.library.NetworkAttachmentType.nat_network
+        adapter.nat_network = iface[ 'name' ]
+
+      elif iface[ 'type' ] == 'internal':
+        adapter.attachment_type = virtualbox.library.NetworkAttachmentType.internal
+        adapter.internal_network = iface[ 'name' ]
+
+      else:
+        raise Exception( 'Unknown interface type "{0}"'.format( iface[ 'type' ] ) )
+
+  for i in range( 0, vbox.system_properties.max_boot_position  ):
+    if i < len( paramaters[ 'boot_order' ] ):
+      try:
+        vm2.set_boot_order( i + 1, BOOT_ORDER_MAP[ paramaters[ 'boot_order' ][ i ] ] )
+      except KeyError:
+        raise Exception( 'Unknown boot item "{0}"'.format( paramaters[ 'boot_order' ][ i ] ) )
 
   vm2.save_settings()
   session.unlock_machine()
@@ -103,7 +145,7 @@ def create_rollback( paramaters ):
     try:
       os.unlink( file_name )
     except OSError as e:
-      if e.errno != 2: # no such file or directory
+      if e.errno != 2:  # no such file or directory
         raise e
 
   # would be nice to clean up temp files and dirs, but really don't know what is safe,
@@ -123,7 +165,7 @@ def destroy( paramaters ):
   try:
     vm = vbox.find_machine( vm_uuid )
   except virtualbox.library.VBoxErrorObjectNotFound:
-    return { 'done': True } # it's gone, we are donne
+    return { 'done': True }  # it's gone, we are donne
 
   media = vm.unregister( virtualbox.library.CleanupMode.detach_all_return_hard_disks_only )
   progress = vm.delete_config( media )
