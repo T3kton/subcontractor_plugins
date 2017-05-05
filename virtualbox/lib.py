@@ -129,7 +129,7 @@ def create_rollback( paramaters ):
     media = vm.unregister( virtualbox.library.CleanupMode.detach_all_return_hard_disks_only )
     progress = vm.delete_config( media )
     while not progress.completed:
-      logging.debug( 'virtualbox: deleting config "{0}" power on at {1}%, {2} seconds left'.format( vm_name, progress.percent, progress.time_remaining ) )
+      logging.debug( 'virtualbox: deleting config "{0}" power off at {1}%, {2} seconds left'.format( vm_name, progress.percent, progress.time_remaining ) )
       time.sleep( 1 )
 
   # make a list of files that needs to be cleaned up, just incase they are created an not attached, or vm wasn't registerd
@@ -215,8 +215,10 @@ def set_power( paramaters ):
 
   if progress is not None:
     while not progress.completed:
-      logging.debug( 'virtualbox: vm "{0}"({1}) power on at {2}%, {3} seconds left'.format( vm_name, vm_uuid, progress.percent, progress.time_remaining ) )
+      logging.debug( 'virtualbox: vm "{0}"({1}) power "{2}" at {3}%, {4} seconds left'.format( vm_name, vm_uuid, desired_state, progress.percent, progress.time_remaining ) )
       time.sleep( 1 )
+
+  # if failed???
 
   logging.info( 'virtualbox: setting power state of "{0}"({1}) to "{2}" complete'.format( vm_name, vm_uuid, desired_state ) )
   return { 'state': _power_state_convert( vm.state ) }
