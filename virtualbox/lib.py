@@ -76,11 +76,11 @@ def create( paramaters ):
       disk_port += 1
 
   for i in range( 0, 4 ):
+    adapter = vm2.get_network_adapter( i )
     if i < len( paramaters[ 'interface_list' ] ):
       iface = paramaters[ 'interface_list' ][ i ]
-      adapter = vm2.get_network_adapter( i )
       adapter.enabled = True
-      adapter.mac = iface[ 'mac' ]
+      adapter.mac_address = iface[ 'mac' ]
 
       if iface[ 'type' ] == 'host':
         adapter.attachment_type = virtualbox.library.NetworkAttachmentType.host_only
@@ -100,6 +100,9 @@ def create( paramaters ):
 
       else:
         raise Exception( 'Unknown interface type "{0}"'.format( iface[ 'type' ] ) )
+
+    else:
+      adapter.enabled = False
 
   for i in range( 0, vbox.system_properties.max_boot_position  ):
     if i < len( paramaters[ 'boot_order' ] ):
