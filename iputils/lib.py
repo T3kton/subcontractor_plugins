@@ -21,7 +21,7 @@ def port_state( paramaters ):
   try:
     port = int( paramaters[ 'port' ] )
   except TypeError:
-    raise Exception( 'Port paramater must be an integer' )
+    raise ValueError( 'Port paramater must be an integer' )
 
   logging.info( 'iputils: checking port "{0}" on "{1}"...'.format( port, target ) )
 

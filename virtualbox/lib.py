@@ -75,6 +75,7 @@ def create( paramaters ):
       vm2.attach_device( disk_controller_name, disk_port, 0, virtualbox.library.DeviceType.hard_disk, medium )
       disk_port += 1
 
+  interface_list = []
   for i in range( 0, 4 ):
     adapter = vm2.get_network_adapter( i )
     if i < len( paramaters[ 'interface_list' ] ):
@@ -104,6 +105,8 @@ def create( paramaters ):
     else:
       adapter.enabled = False
 
+    interface_list.append( { 'name': 'eth{0}'.format( i + 1 ), 'mac': iface[ 'mac' ] } )
+
   for i in range( 0, vbox.system_properties.max_boot_position  ):
     if i < len( paramaters[ 'boot_order' ] ):
       try:
@@ -115,7 +118,7 @@ def create( paramaters ):
   session.unlock_machine()
   logging.info( 'virtualbox: vm "{0}" created'.format( vm_name ) )
 
-  return { 'done': True, 'uuid': vm.hardware_uuid }
+  return { 'done': True, 'uuid': vm.hardware_uuid, 'interface_list': interface_list }
 
 
 def create_rollback( paramaters ):
