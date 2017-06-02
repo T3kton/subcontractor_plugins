@@ -102,10 +102,10 @@ def create( paramaters ):
       else:
         raise Exception( 'Unknown interface type "{0}"'.format( iface[ 'type' ] ) )
 
+      interface_list.append( { 'name': 'eth{0}'.format( i ), 'mac': iface[ 'mac' ] } )
+
     else:
       adapter.enabled = False
-
-    interface_list.append( { 'name': 'eth{0}'.format( i + 1 ), 'mac': iface[ 'mac' ] } )
 
   for i in range( 0, vbox.system_properties.max_boot_position  ):
     if i < len( paramaters[ 'boot_order' ] ):
