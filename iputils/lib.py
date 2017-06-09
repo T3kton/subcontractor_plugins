@@ -1,7 +1,7 @@
 import socket
 import logging
 
-from subcontractor_plugins.iputils.pyping import ping
+from subcontractor_plugins.iputils.pyping import ping as pyping
 
 
 def ping( paramaters ):
@@ -9,7 +9,7 @@ def ping( paramaters ):
   count = paramaters[ 'count' ]
   logging.info( 'iputils: pinging "{0}" "{1}" times...'.format( target, count ) )
 
-  pinger = ping( target )
+  pinger = pyping( target )
   pinger.run( count=count )
 
   logging.info( 'iputils: pinged "{0}", send: "{1}" recieved "{2}"'.format( target, pinger.send_count, pinger.receive_count ) )
@@ -18,13 +18,17 @@ def ping( paramaters ):
 
 def port_state( paramaters ):
   target = paramaters[ 'target' ]
-  port = paramaters[ 'port' ]
+  try:
+    port = int( paramaters[ 'port' ] )
+  except TypeError:
+    raise ValueError( 'Port paramater must be an integer' )
+
   logging.info( 'iputils: checking port "{0}" on "{1}"...'.format( port, target ) )
 
   sock = socket.socket()
-  sock.sdttimeout( 5 )
+  sock.settimeout( 5 )
   try:
-    sock.connect( target, port )
+    sock.connect( ( target, port ) )
     state = 'open'
   except socket.timeout:
     state = 'timeout'
@@ -34,4 +38,4 @@ def port_state( paramaters ):
     state = 'exception: "{0}"({1})'.format( str( e ), type( e ).__name__ )
 
   logging.info( 'iputils: checking port "{0}" on "{1}" is "{2}"'.format( port, target, state ) )
-  return { 'result': state }
+  return { 'state': state }
