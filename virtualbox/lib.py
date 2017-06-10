@@ -165,7 +165,7 @@ def create_rollback( paramaters ):
 def destroy( paramaters ):
   vm_uuid = paramaters[ 'uuid' ]
   vm_name = paramaters[ 'name' ]
-  logging.info( 'virtualbox: destroying vm "{0}"'.format( vm_name ) )
+  logging.info( 'virtualbox: destroying vm "{0}"({1})'.format( vm_name, vm_uuid ) )
   vbox = virtualbox.VirtualBox()
 
   try:
