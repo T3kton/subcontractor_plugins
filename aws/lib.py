@@ -87,7 +87,7 @@ def destroy( paramaters ):
   except WaiterError:
     raise Exception( 'Timeout waiting for AWS EC2 instance "{0}" to be terminated'.format( instance_name ) )
 
-  logging.info( 'aws: vm "{0}" destroyed'.format( instance_name ) )
+  logging.info( 'aws: instance "{0}" destroyed'.format( instance_name ) )
   return { 'done': True }
 
 
@@ -120,6 +120,8 @@ def set_power( paramaters ):
     instance.stop( Force=True )
   elif desired_state == 'soft_off':
     instance.stop( Force=False )
+  else:
+    raise Exception( 'Unknown desired state "{0}"'.format( desired_state ) )
 
   counter = 0
   while True:

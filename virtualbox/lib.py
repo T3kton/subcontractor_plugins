@@ -218,6 +218,9 @@ def set_power( paramaters ):
     session.console.power_down()
   elif desired_state == 'soft_off':
     progress = session.console.power_button()
+  else:
+    raise Exception( 'Unknown desired state "{0}"'.format( desired_state ) )
+
 
   if progress is not None:
     while not progress.completed:
