@@ -3,34 +3,47 @@ import docker
 
 
 # http://docker-py.readthedocs.io/en/1.10.0/api/
-def _connect():
-  logging.debug( 'docker: connecting to docker' )
-  return docker.from_env()
+def _connect( paramaters ):
+  try:
+    host = paramaters[ 'host' ]
+  except KeyError:
+    raise ValueError( '\'host\' is required' )
+
+  logging.debug( 'docker: connecting to docker at "{0}"'.format( host ) )
+
+  # return docker.Client( base_url='tcp://{0}:2376'.format( host ) )  # for older version of py-docker
+  return docker.DockerClient( base_url='tcp://{0}:2376'.format( host ) )
 
 
 def create( paramaters ):
   container_name = paramaters[ 'name' ]
   logging.info( 'docker: creating container "{0}"'.format( container_name ) )
-  client = _connect()
+  client = _connect( paramaters )
+
+  logging.debug( 'docker: pulling "{0}"'.format( paramaters[ 'docker_image' ] ) )
+  try:
+    client.images.pull( paramaters[ 'docker_image' ] )
+  except Exception as e:
+    raise Exception( 'Error Creating Container: {0}'.format( str( e ) ) )
+
+  port_map = dict( [ ( k, int( v) ) for k, v in paramaters[ 'port_map' ].items() ] )
 
   container_paramaters = {
                           'image': paramaters[ 'docker_image' ],
                           'name': container_name,
-                          'ports': [ 22 ],
-                          'host_config': client.create_host_config( port_bindings={ 22: 4222 } )
-                        }
+                          'ports': port_map
+                         }
 
+  logging.debug( 'docker: creating "{0}"'.format( container_paramaters ) )
   try:
-    rc = client.create_container( **container_paramaters )
-  except docker.APIError as e:
+    container = client.containers.create( **container_paramaters )
+  except Exception as e:
     raise Exception( 'Error Creating Container: {0}'.format( str( e ) ) )
 
-  if rc[ 'Warnings' ]:
-    logging.warn( 'docker: container creation had the foloowing warning(s): "{0}"'.format( rc[ 'Warnings' ] ) )
-  container_id = rc[ 'Id' ]
+  docker_id = container.id
 
   logging.info( 'docker: container "{0}" created'.format( container_name ) )
-  return { 'done': True, 'id': container_id }
+  return { 'done': True, 'id': docker_id }
 
 
 def create_rollback( paramaters ):
@@ -44,26 +57,27 @@ def create_rollback( paramaters ):
 
 
 def destroy( paramaters ):
-  container_id = paramaters[ 'container_id' ]
+  docker_id = paramaters[ 'docker_id' ]
   container_name = paramaters[ 'name' ]
-  logging.info( 'docker: destroying container "{0}"({1})'.format( container_name, container_id ) )
-  client = _connect()
+  logging.info( 'docker: destroying container "{0}"({1})'.format( container_name, docker_id ) )
+  client = _connect( paramaters )
+  try:
+    container = client.containers.get( docker_id )
+  except Exception as e:
+    raise Exception( 'Error Getting Container "{0}": {1}'.format( docker_id, str( e ) ) )
 
-  client.stop( container=container_id )
-
-  # try:
-  #   instance.wait_for_termated()
-  # except WaiterError:
-  #   raise Exception( 'Timeout waiting for AWS EC2 instance "{0}" to be terminated'.format( container_name ) )
-
-  client.remove_container( container=container_id )
+  try:
+    container.remove( force=True )
+  except Exception as e:
+    raise Exception( 'Error Removing Container "{0}": {1}'.format( docker_id, str( e ) ) )
 
   logging.info( 'docker: container "{0}" destroyed'.format( container_name ) )
   return { 'done': True }
 
 
 def _power_state_convert( state ):
-  if state[ 'Running' ]:
+  print( '****************** {0}'.format(state))
+  if state == 'running':
     return 'start'
 
   else:
@@ -74,33 +88,47 @@ def _power_state_convert( state ):
 
 
 def start_stop( paramaters ):
-  container_id = paramaters[ 'container_id' ]
+  docker_id = paramaters[ 'docker_id' ]
   container_name = paramaters[ 'name' ]
   desired_state = paramaters[ 'state' ]
-  logging.info( 'docker: setting state of "{0}"({1}) to "{2}"...'.format( container_name, container_id, desired_state ) )
-  client = _connect()
+  logging.info( 'docker: setting state of "{0}"({1}) to "{2}"...'.format( container_name, docker_id, desired_state ) )
+  client = _connect( paramaters )
+  try:
+    container = client.containers.get( docker_id )
+  except Exception as e:
+    raise Exception( 'Error Getting Container "{0}": {1}'.format( docker_id, str( e ) ) )
 
-  curent_state = _power_state_convert( client.inspect_container( container=container_id )[ 'State' ] )
+  curent_state = _power_state_convert( container.status )
   if curent_state == desired_state:
     return { 'state': curent_state }
 
   if desired_state == 'start':
-    client.start( container=container_id )
+    try:
+      container.start()
+    except Exception as e:
+      raise Exception( 'Error Starting Container "{0}": {1}'.format( docker_id, str( e ) ) )
 
   elif desired_state == 'stop':
-    client.stop( container=container_id )
+    try:
+      container.stop()
+    except Exception as e:
+      raise Exception( 'Error Stopping Container "{0}": {1}'.format( docker_id, str( e ) ) )
 
   else:
     raise Exception( 'Unknown desired state "{0}"'.format( desired_state ) )
 
-  logging.info( 'docker: setting state of "{0}"({1}) to "{2}" complete'.format( container_name, container_id, desired_state ) )
+  logging.info( 'docker: setting state of "{0}"({1}) to "{2}" complete'.format( container_name, docker_id, desired_state ) )
   return { 'state': desired_state }
 
 
 def state( paramaters ):
-  container_id = paramaters[ 'container_id' ]
+  docker_id = paramaters[ 'docker_id' ]
   container_name = paramaters[ 'name' ]
-  logging.info( 'docker: getting "{0}"({1}) power state...'.format( container_name, container_id ) )
-  client = _connect()
+  logging.info( 'docker: getting "{0}"({1}) power state...'.format( container_name, docker_id ) )
+  client = _connect( paramaters )
+  try:
+    container = client.containers.get( docker_id )
+  except Exception as e:
+    raise Exception( 'Error Getting Container "{0}": {1}'.format( docker_id, str( e ) ) )
 
-  return { 'state': _power_state_convert( client.inspect_container( container=container_id )[ 'State' ] ) }
+  return { 'state': _power_state_convert( container.status ) }
