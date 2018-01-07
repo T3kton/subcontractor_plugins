@@ -62,11 +62,11 @@ except Exception as e:
   # unforntuntally what ever unpickles this will not have access to the right namespace, so it will probably not unpickle the oritional e
   e = Exception( '{0}({1})'.format( str( e ), type( e ).__name__ ) )
   print( MAGIC_LOCATOR + pickle.dumps( e, 0 ) )
-  sys.exit( 0 ) # yes there was an error, but we are wrapping it ip so upstream can deal with it beter
+  sys.exit( 0 )  # yes there was an error, but we are wrapping it ip so upstream can deal with it beter
 
 logging.info( 'systemPythonWrapper: sending results' )
 logging.shutdown()
 
-print( MAGIC_LOCATOR + pickle.dumps( result, 0 ) ) # can not print anything after this line
+print( MAGIC_LOCATOR + pickle.dumps( result, 0 ) )  # can not print anything after this line
 
 sys.exit( 0 )
