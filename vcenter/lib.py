@@ -70,6 +70,14 @@ def _getHost( rp, name ):
   raise ValueError( 'Host "{0}" in "{0}" not found'.format( name, rp.name ) )
 
 
+def _getDatastore( dc, name ):
+  for ds in dc.datastore:
+    if ds.name == name:
+      return ds
+
+  raise ValueError( 'Datastore "{0}" in "{0}" not found'.format( name, dc.name ) )
+
+
 def _genPaths( vm_name, disk_list ):
   vmx_file_path = '[{0}] {1}/{1}.vmx'.format( disk_list[0][ 'ds' ], vm_name )
 
@@ -78,6 +86,38 @@ def _genPaths( vm_name, disk_list ):
     disk_filepath_list = '[{0}] {1}/{2}.vmdk'.format( disk[ 'ds' ], vm_name, disk[ 'name' ] )
 
   return vmx_file_path, disk_filepath_list
+
+
+def host_list( paramaters ):
+  # returns a list of hosts in a resource
+  # host must have paramater[ 'min_memory' ] aviable in MB
+  # orderd by paramater[ 'cpu_scaler' ] * % cpu remaning + paramater[ 'memory_scaler' ] * % mem remaning
+  connection_paramaters = paramaters[ 'connection' ]
+  logging.info( 'vcenter: getting hostList for dc: "{0}"  rp: "{1}"'.format( paramaters[ 'datacenter' ], paramaters[ 'cluster' ] ) )
+  si = _connect( connection_paramaters )
+  try:
+    dataCenter = _getDatacenter( si, paramaters[ 'datacenter' ] )
+    resourcePool = _getResourcePool( dataCenter, paramaters[ 'cluster' ] )
+
+    host_map = {}
+    for host in resourcePool.owner.host:
+      total_memory = host.hardware.memorySize / 1024 / 1024
+      memory_aviable = total_memory - host.summary.quickStatus.overallMemoryUsage
+      if memory_aviable < paramaters[ 'min_mem' ]:
+        continue
+
+      total_cpu = host.hardware.numCpuCores * host.hardware.cpuMhz
+      cpu_aviable = total_cpu - host.summary.quickStatus.overallCpuUsage
+
+      host_map[ host.name ] = paramaters[ 'memory_scaler' ] * ( memory_aviable / total_memory ) + paramaters[ 'cpu_scaler' ] * ( cpu_aviable / total_cpu )
+
+    result = host_map.keys()
+    result.sort( key=lambda a: host_map[ a ] )
+
+    return result
+
+  finally:
+    _disconnect( si )
 
 
 def _createDisk( si, dc, disk, datastore, file_path ):
@@ -95,7 +135,7 @@ def _createDisk( si, dc, disk, datastore, file_path ):
       raise Exception( 'Unknwn Task Error when checking directory: "{0}"'.format( task.info.error ) )
 
   if task.info.state != 'success':
-    raise Exception( 'Unexpected Task State With VM Create: "{0}"'.format( task.info.state ) )
+    raise Exception( 'Unexpected Task State when checking directory: "{0}"'.format( task.info.state ) )
 
   spec = vim.VirtualDiskManager.FileBackedVirtualDiskSpec()
   spec.diskType = 'thin'  # 'eagerZeroedThick', 'preallocate'
@@ -109,7 +149,7 @@ def _createDisk( si, dc, disk, datastore, file_path ):
     raise Exception( 'Unknwn Task Error when Creating Disk: "{0}"'.format( task.info.error ) )
 
   if task.info.state != 'success':
-    raise Exception( 'Unexpected Task State With VM Create: "{0}"'.format( task.info.state ) )
+    raise Exception( 'Unexpected Task State when Creating Disk: "{0}"'.format( task.info.state ) )
 
 
 def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore should be done prior to calling this, that way rollback can know where it's at
@@ -124,6 +164,7 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
     resourcePool = _getResourcePool( dataCenter, vm_paramaters[ 'cluster' ] )
     folder = dataCenter.vmFolder
     host = _getHost( resourcePool, vm_paramaters[ 'host' ] )
+    datastore = _getDatastore( dataCenter, vm_paramaters[ 'datastore' ] )
 
     vmx_file_path, disk_filepath_list = _genPaths( vm_paramaters[ 'name' ], vm_paramaters[ 'disk_list' ] )
 
@@ -132,7 +173,7 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
       _createDisk( si, dataCenter, disk, datastore, disk_filepath_list[ i ] )
 
     configSpec = vim.vm.ConfigSpec()
-    configSpec.name = vm_paramaters[ 'name' ]
+    configSpec.name = vm_name
     configSpec.memoryMB = vm_paramaters[ 'memory_size' ]
     configSpec.numCPUs = vm_paramaters[ 'cpu_count' ]
     configSpec.guestId = 'debian5_64Guest'
@@ -197,6 +238,8 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
     if task.info.state != 'success':
       raise Exception( 'Unexpected Task State With VM Create: "{0}"'.format( task.info.state ) )
 
+    logging.info( 'vcenter: vm "{0}" created, uuid: "{1}"'.format( vm_name, task.info.result.config.uuid ) )
+
     return { 'done': True, 'uuid': task.info.result.config.uuid }
 
   finally:
@@ -211,12 +254,23 @@ def create_rollback( paramaters ):
 
   si = _connect( connection_paramaters )
   try:
-    logging.info( 'vcenter: vm "{0}" rolledback'.format( vm_name ) )
+    dataCenter = _getDatacenter( si, vm_paramaters[ 'datacenter' ] )
 
     vmx_file_path, disk_filepath_list = _genPaths( vm_paramaters[ 'name' ], vm_paramaters[ 'disk_list' ] )
 
-    #unlink all the files
-    # remove all the folders
+    for item in disk_filepath_list:
+      task = si.content.fileManager.DeleteDatastoreFile( name=item, datacenter=dataCenter )
+      _taskWait( task )
+      if task.info.state == 'error':
+        if task.info.error.fault.__class__.__name__ == 'FileNotFound':
+          continue
+        else:
+          raise Exception( 'Unknwn Task Error when Deleting "{0}": "{1}"'.format( item, task.info.error ) )
+
+      if task.info.state != 'success':
+        raise Exception( 'Unexpected Task State when Deleting "{0}": "{1}"'.format( task.info.state ) )
+
+    # remove all the folders if empty
 
     return { 'rollback_done': True }
 
