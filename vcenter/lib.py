@@ -157,6 +157,43 @@ def host_list( paramaters ):
     _disconnect( si )
 
 
+def create_datastore( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
+  logging.info( 'vcenter: creating datastores: "{0}"'.format( paramaters[ 'name' ] ) )
+  si = _connect( connection_paramaters )
+  try:
+    dataCenter = _getDatacenter( si, paramaters[ 'datacenter' ] )
+    resourcePool = _getResourcePool( dataCenter, paramaters[ 'host' ] )
+    host = _getHost( resourcePool, paramaters[ 'host' ] )
+
+    dss = host.configManager.datastoreSystem
+    ss = host.configManager.storageSystem
+
+    disk_list = []
+    for lun in ss.storageDeviceInfo.scsiLun:
+      disk_list.append( { 'model': lun.model, 'path': lun.devicePath } )
+
+    spec = None
+    for i in range( 0, len( disk_list ) ):
+      disk = disk_list[ i ]
+      if disk[ 'model' ] == paramaters[ 'model' ]:
+        spec = dss.QueryVmfsDatastoreCreateOptions( disk[ 'path' ] )[0].spec
+        del disk_list[ i ]
+        break
+
+    if spec is None:
+      raise ValueError( 'Unable to find an aviable disk with model "{0}"'.format( paramaters[ 'model' ] ) )
+
+    spec.vmfs.volumeName = paramaters[ 'name' ]
+
+    dss.CreateVmfsDatastore( spec )
+
+    return { 'done': True }
+
+  finally:
+    _disconnect( si )
+
+
 def datastore_list( paramaters ):
   # returns a list of hosts in a resource
   # host must have paramater[ 'min_memory' ] aviable in MB
@@ -301,8 +338,8 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
       devSpec.device.backing.deviceName = network.name
       configSpec.deviceChange.append( devSpec )
 
-    configSpec.bootOptions.bootOrder.append( vim.vm.BootOptions.BootableEthernetDevice( deviceKey=4001 ) )  # TODO: figure out which is the boot drive and put it here
-    configSpec.bootOptions.bootOrder.append( vim.vm.BootOptions.BootableDiskDevice( deviceKey=2001 ) )  # TODO: figure out which is the provisinioning interface and set it here
+    configSpec.bootOptions.bootOrder.append( vim.vm.BootOptions.BootableEthernetDevice( deviceKey=4000 ) )  # TODO: figure out which is the boot drive and put it here
+    configSpec.bootOptions.bootOrder.append( vim.vm.BootOptions.BootableDiskDevice( deviceKey=2000 ) )  # TODO: figure out which is the provisinioning interface and set it here
 
     task = folder.CreateVm( config=configSpec, pool=resourcePool, host=host )
 
@@ -448,15 +485,15 @@ def set_power( paramaters ):
     elif desired_state == 'off':
       task = vm.PowerOff()
     elif desired_state == 'soft_off':
-      task = vm.Shutdown()
+      vm.ShutdownGuest()
 
     if task is not None:
       while task.info.state not in ( vim.TaskInfo.State.success, vim.TaskInfo.State.error ):
         logging.debug( 'vcenter: vm "{0}"({1}) power "{2}" at {3}%'.format( vm_name, vm_uuid, desired_state, task.info.progress ) )
         time.sleep( 1 )
 
-    if task.info.state == vim.TaskInfo.State.error:
-      raise Exception( 'vcenter: Unable to set power state of "{0}"({1}) to "{2}"'.format( vm_name, vm_uuid, desired_state ) )
+      if task.info.state == vim.TaskInfo.State.error:
+        raise Exception( 'vcenter: Unable to set power state of "{0}"({1}) to "{2}"'.format( vm_name, vm_uuid, desired_state ) )
 
     logging.info( 'vcenter: setting power state of "{0}"({1}) to "{2}" complete'.format( vm_name, vm_uuid, desired_state ) )
     return { 'state': _power_state_convert( vm.runtime.powerState ) }
@@ -484,9 +521,11 @@ def power_state( paramaters ):
 from pyVim.connect import Connect
 
 for unverified ssl:
-In [15]: import ssl
-In [16]: _create_unverified_https_context = ssl._create_unverified_context
-In [17]: ssl._create_default_https_context = _create_unverified_https_context
+
+import ssl
+_create_unverified_https_context = ssl._create_unverified_context
+ssl._create_default_https_context = _create_unverified_https_context
+
 Other wise there is  a paramater to Connect for verified SSL
 
 
