@@ -18,7 +18,7 @@ def create( paramaters ):
   logging.info( 'virtualbox: creating vm "{0}"'.format( vm_name ) )
   vbox = virtualbox.VirtualBox()
 
-  settings_file = vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties.default_machine_folder )
+  settings_file = vbox.compose_machine_filename( vm_name.encode(), CREATE_GROUP, CREATE_FLAGS, vbox.system_properties.default_machine_folder )
   vm = vbox.create_machine( settings_file, vm_name, CREATE_GROUPS, CREATE_OS_TYPE_ID, CREATE_FLAGS )
   vm.memory_size = int( paramaters.get( 'memory_size', 512 ) )  # in Meg
 
@@ -85,24 +85,24 @@ def create( paramaters ):
 
       if iface[ 'type' ] == 'host':
         adapter.attachment_type = virtualbox.library.NetworkAttachmentType.host_only
-        adapter.host_only_interface = iface[ 'name' ]
+        adapter.host_only_interface = iface[ 'network' ]
 
       elif iface[ 'type' ] == 'bridge':
         adapter.attachment_type = virtualbox.library.NetworkAttachmentType.bridged
-        adapter.bridged_interface = iface[ 'name' ]
+        adapter.bridged_interface = iface[ 'network' ]
 
       elif iface[ 'type' ] == 'nat':
         adapter.attachment_type = virtualbox.library.NetworkAttachmentType.nat_network
-        adapter.nat_network = iface[ 'name' ]
+        adapter.nat_network = iface[ 'network' ]
 
       elif iface[ 'type' ] == 'internal':
         adapter.attachment_type = virtualbox.library.NetworkAttachmentType.internal
-        adapter.internal_network = iface[ 'name' ]
+        adapter.internal_network = iface[ 'network' ]
 
       else:
         raise Exception( 'Unknown interface type "{0}"'.format( iface[ 'type' ] ) )
 
-      interface_list.append( { 'name': 'eth{0}'.format( i ), 'mac': iface[ 'mac' ] } )
+      interface_list.append( { 'name': iface[ 'name' ], 'mac': iface[ 'mac' ] } )
 
     else:
       adapter.enabled = False
