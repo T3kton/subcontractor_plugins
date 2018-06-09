@@ -1,0 +1,14 @@
+Source: subcontractor-plugins
+Section: multiverse/python
+Priority: optional
+Maintainer: Peter Howe <pnhowe@gmail.com>
+Build-Depends: debhelper (>= 7), python3 (>= 3.4), python3-dev (>=3.4), python3-setuptools (>= 20.0), lsb-release
+Standards-Version: 3.8.3
+X-Python3-Version: >= 3.4
+
+Package: subcontractor-plugins
+Architecture: all
+Depends: python3 (>= 3.4), subcontractor, ${misc:Depends}, ${python3:Depends}
+Recommends: python3-docker, python3-pyvmomi, python3-boto3
+Description: Subcontractor Plugins
+  Subcontractor Plugins
