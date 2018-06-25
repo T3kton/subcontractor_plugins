@@ -1,6 +1,7 @@
 import logging
 import time
 import re
+import random
 
 from pyVim import connect
 from pyVmomi import vim
@@ -268,6 +269,11 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
   connection_paramaters = paramaters[ 'connection' ]
   vm_name = vm_paramaters[ 'name' ]
 
+  # vcenter static mac are 00:50:56:00:00:00 -> 00:50:56:3F:FF:FF
+  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
+    mac = '005056{0:06x}'.format( random.randint( 0, 4194303 ) )  # TODO: check to see if the mac is allready in use
+    vm_paramaters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
+
   logging.info( 'vcenter: creating vm "{0}"'.format( vm_name ) )
   si = _connect( connection_paramaters )
   try:
@@ -431,23 +437,22 @@ def get_interface_map( paramaters ):
   connection_paramaters = paramaters[ 'connection' ]
   vm_uuid = paramaters[ 'uuid' ]
   vm_name = paramaters[ 'name' ]
+  interface_list = []
 
   logging.info( 'vcenter: getting interface map "{0}"({1})'.format( vm_name, vm_uuid ) )
   si = _connect( connection_paramaters )
   try:
     vm = _getVM( si, vm_uuid )
 
-    interface_map = {}
     for device in vm.config.hardware.device:
       if device.__class__.__name__ in NET_CLASS_LIST:
         i = device.key - 4000
         if i < 0 or i > 64:
           raise ValueError( 'Invalid device key "{0}"'.format( device.key ) )
 
-        interface = paramaters[ 'interface_list' ][ i ]
-        interface_map[ interface[ 'name' ] ] = device.macAddress
+        interface_list.append( device.macAddress )
 
-    return { 'interface_map': interface_map }
+    return { 'interface_list': interface_list }
 
   finally:
     _disconnect( si )
