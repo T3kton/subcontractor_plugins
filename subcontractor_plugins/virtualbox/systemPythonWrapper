@@ -9,13 +9,16 @@
 # use  magic to designate the  beginning of the output, so the reader dosen't get Confused
 
 import sys
+import __main__
+import os
 
-sys.path.insert( 1,  '../..' )
-
-from subcontractor_plugins.virtualbox.lib import create, create_rollback, destroy, set_power, power_state
+sys.path.append( os.path.dirname( __main__.__file__ ) )
 
 import pickle
 import logging
+
+from lib import create, create_rollback, destroy, set_power, power_state
+
 
 MAGIC_LOCATOR = '\x01DATA\x02'
 
