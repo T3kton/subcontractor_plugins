@@ -9,13 +9,16 @@
 # use  magic to designate the  beginning of the output, so the reader dosen't get Confused
 
 import sys
+import __main__
+import os
 
-sys.path.insert( 1,  '../..' )
-
-from subcontractor_plugins.virtualbox.lib import create, create_rollback, destroy, set_power, power_state
+sys.path.append( os.path.dirname( __main__.__file__ ) )
 
 import pickle
 import logging
+
+from lib import create, create_rollback, destroy, set_power, power_state
+
 
 MAGIC_LOCATOR = '\x01DATA\x02'
 
@@ -62,11 +65,11 @@ except Exception as e:
   # unforntuntally what ever unpickles this will not have access to the right namespace, so it will probably not unpickle the oritional e
   e = Exception( '{0}({1})'.format( str( e ), type( e ).__name__ ) )
   print( MAGIC_LOCATOR + pickle.dumps( e, 0 ) )
-  sys.exit( 0 ) # yes there was an error, but we are wrapping it ip so upstream can deal with it beter
+  sys.exit( 0 )  # yes there was an error, but we are wrapping it ip so upstream can deal with it beter
 
 logging.info( 'systemPythonWrapper: sending results' )
 logging.shutdown()
 
-print( MAGIC_LOCATOR + pickle.dumps( result, 0 ) ) # can not print anything after this line
+print( MAGIC_LOCATOR + pickle.dumps( result, 0 ) )  # can not print anything after this line
 
 sys.exit( 0 )

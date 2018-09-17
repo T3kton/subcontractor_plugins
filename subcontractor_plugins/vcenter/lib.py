@@ -1,6 +1,7 @@
 import logging
 import time
 import re
+import random
 
 from pyVim import connect
 from pyVmomi import vim
@@ -20,7 +21,7 @@ NET_CLASS_LIST = ( 'vim.vm.device.VirtualE1000',
                    'vim.vm.device.VirtualVmxnet',
                    'vim.vm.device.VirtualVmxnet2',
                    'vim.vm.device.VirtualVmxnet3'
-                 )
+                   )
 
 
 class MOBNotFound( Exception ):
@@ -268,6 +269,11 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
   connection_paramaters = paramaters[ 'connection' ]
   vm_name = vm_paramaters[ 'name' ]
 
+  # vcenter static mac are 00:50:56:00:00:00 -> 00:50:56:3F:FF:FF
+  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
+    mac = '005056{0:06x}'.format( random.randint( 0, 4194303 ) )  # TODO: check to see if the mac is allready in use, also make them sequential
+    vm_paramaters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
+
   logging.info( 'vcenter: creating vm "{0}"'.format( vm_name ) )
   si = _connect( connection_paramaters )
   try:
@@ -431,23 +437,22 @@ def get_interface_map( paramaters ):
   connection_paramaters = paramaters[ 'connection' ]
   vm_uuid = paramaters[ 'uuid' ]
   vm_name = paramaters[ 'name' ]
+  interface_list = []
 
   logging.info( 'vcenter: getting interface map "{0}"({1})'.format( vm_name, vm_uuid ) )
   si = _connect( connection_paramaters )
   try:
     vm = _getVM( si, vm_uuid )
 
-    interface_map = {}
     for device in vm.config.hardware.device:
       if device.__class__.__name__ in NET_CLASS_LIST:
         i = device.key - 4000
         if i < 0 or i > 64:
           raise ValueError( 'Invalid device key "{0}"'.format( device.key ) )
 
-        interface = paramaters[ 'interface_list' ][ i ]
-        interface_map[ interface[ 'name' ] ] = device.macAddress
+        interface_list.append( device.macAddress )
 
-    return { 'interface_map': interface_map }
+    return { 'interface_list': interface_list }
 
   finally:
     _disconnect( si )
@@ -485,7 +490,13 @@ def set_power( paramaters ):
     elif desired_state == 'off':
       task = vm.PowerOff()
     elif desired_state == 'soft_off':
-      vm.ShutdownGuest()
+      try:
+        vm.ShutdownGuest()  # no Task
+      except vim.fault.ToolsUnavailable:
+        task = vm.PowerOff()
+
+    # if it won't power off
+    # vm.terminateVM()  # no Task
 
     if task is not None:
       while task.info.state not in ( vim.TaskInfo.State.success, vim.TaskInfo.State.error ):
@@ -516,3 +527,25 @@ def power_state( paramaters ):
 
   finally:
     _disconnect( si )
+
+"""
+from pyVim.connect import Connect
+
+for unverified ssl:
+
+import ssl
+_create_unverified_https_context = ssl._create_unverified_context
+ssl._create_default_https_context = _create_unverified_https_context
+
+Other wise there is  a paramater to Connect for verified SSL
+
+
+In [18]: c = Connect( host='192.168.200.101', user='root', pwd='0skin3rd')
+
+In [22]: cont = c.RetrieveContent()
+
+# should use the UUID instead
+In [24]: cont.searchIndex.FindByInventoryPath( '/ha-datacenter/vm/mcp-preallocate--5421431c93-2.test' )
+Out[24]: 'vim.VirtualMachine:32'
+
+"""

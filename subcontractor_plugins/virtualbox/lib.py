@@ -2,6 +2,8 @@ import logging
 import virtualbox
 import time
 import os
+import random
+
 
 CLEAN_POWER_DOWN_COUNT = 20
 
@@ -14,13 +16,20 @@ BOOT_ORDER_MAP = { 'hdd': virtualbox.library.DeviceType.hard_disk, 'net': virtua
 
 
 def create( paramaters ):
+  vm_paramaters = paramaters[ 'vm' ]
   vm_name = paramaters[ 'name' ]
+
+  # virtualbox static mac are 08:00:27:00:00:00 -> 08:00:27:FF:FF:FF
+  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
+    mac = '080027{0:06x}'.format( random.randint( 0, 16777215 ) )  # TODO: check to see if the mac is allready in use, also make them sequential
+    vm_paramaters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
+
   logging.info( 'virtualbox: creating vm "{0}"'.format( vm_name ) )
   vbox = virtualbox.VirtualBox()
 
   settings_file = vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties.default_machine_folder )
   vm = vbox.create_machine( settings_file, vm_name, CREATE_GROUPS, CREATE_OS_TYPE_ID, CREATE_FLAGS )
-  vm.memory_size = int( paramaters.get( 'memory_size', 512 ) )  # in Meg
+  vm.memory_size = int( vm_paramaters[ 'memory_size' ] )  # in Meg
 
   disk_controller_name = 'SCSI'
   vm.add_storage_controller( disk_controller_name, virtualbox.library.StorageBus.scsi )
@@ -43,7 +52,7 @@ def create( paramaters ):
 
   disk_port = 0
   cd_port = 0
-  for disk in paramaters[ 'disk_list' ]:
+  for disk in vm_paramaters[ 'disk_list' ]:
     disk_name = disk[ 'name' ]
     logging.debug( 'vritualbox: creating disk "{0}" on "{1}"'.format( disk_name, vm_name ) )
     if 'file' in disk:
@@ -78,8 +87,8 @@ def create( paramaters ):
   interface_list = []
   for i in range( 0, 4 ):
     adapter = vm2.get_network_adapter( i )
-    if i < len( paramaters[ 'interface_list' ] ):
-      iface = paramaters[ 'interface_list' ][ i ]
+    if i < len( vm_paramaters[ 'interface_list' ] ):
+      iface = vm_paramaters[ 'interface_list' ][ i ]
       adapter.enabled = True
       adapter.mac_address = iface[ 'mac' ]
 
@@ -108,20 +117,21 @@ def create( paramaters ):
       adapter.enabled = False
 
   for i in range( 0, vbox.system_properties.max_boot_position  ):
-    if i < len( paramaters[ 'boot_order' ] ):
+    if i < len( vm_paramaters[ 'boot_order' ] ):
       try:
-        vm2.set_boot_order( i + 1, BOOT_ORDER_MAP[ paramaters[ 'boot_order' ][ i ] ] )
+        vm2.set_boot_order( i + 1, BOOT_ORDER_MAP[ vm_paramaters[ 'boot_order' ][ i ] ] )
       except KeyError:
-        raise Exception( 'Unknown boot item "{0}"'.format( paramaters[ 'boot_order' ][ i ] ) )
+        raise Exception( 'Unknown boot item "{0}"'.format( vm_paramaters[ 'boot_order' ][ i ] ) )
 
   vm2.save_settings()
   session.unlock_machine()
   logging.info( 'virtualbox: vm "{0}" created'.format( vm_name ) )
 
-  return { 'done': True, 'uuid': vm.hardware_uuid, 'interface_list': interface_list }
+  return { 'done': True, 'uuid': vm.hardware_uuid }
 
 
 def create_rollback( paramaters ):
+  vm_paramaters = paramaters[ 'vm' ]
   vm_name = paramaters[ 'name' ]
   logging.info( 'virtualbox: rolling back vm "{0}"'.format( vm_name ) )
   vbox = virtualbox.VirtualBox()
@@ -141,7 +151,7 @@ def create_rollback( paramaters ):
   # make a list of files that needs to be cleaned up, just incase they are created an not attached, or vm wasn't registerd
   file_list = [ vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties.default_machine_folder ) ]
 
-  for disk in paramaters[ 'disk_list' ]:
+  for disk in vm_paramaters[ 'disk_list' ]:
     disk_name = disk[ 'name' ]
     if 'file' not in disk:
       file_list.append( '{0}/{1}.vdi'.format( os.path.dirname( file_list[0] ), disk_name ) )
@@ -183,6 +193,25 @@ def destroy( paramaters ):
   return { 'done': True }
 
 
+def get_interface_map( paramaters ):
+  vm_uuid = paramaters[ 'uuid' ]
+  vm_name = paramaters[ 'name' ]
+  interface_list = []
+  logging.info( 'virtualbox: getting interface map "{0}"({1})'.format( vm_name, vm_uuid ) )
+  vbox = virtualbox.VirtualBox()
+
+  vm = vbox.find_machine( vm_name )
+
+  for i in range( 0, 4 ):
+    adapter = vm.get_network_adapter( i )
+    if not adapter.mac_address:
+      break
+
+    interface_list.append( adapter.mac_address )
+
+  return { 'interface_list': interface_list }
+
+
 def _power_state_convert( state ):
   if state in ( virtualbox.library.MachineState.powered_off, virtualbox.library.MachineState.saved ):
     return 'off'
@@ -218,6 +247,8 @@ def set_power( paramaters ):
     session.console.power_down()
   elif desired_state == 'soft_off':
     progress = session.console.power_button()
+  else:
+    raise Exception( 'Unknown desired state "{0}"'.format( desired_state ) )
 
   if progress is not None:
     while not progress.completed:
