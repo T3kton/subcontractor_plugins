@@ -15,13 +15,13 @@ CREATE_OS_TYPE_ID = 'Ubuntu_64'
 
 BOOT_ORDER_MAP = { 'hdd': 'HDD', 'net': 'NET', 'cd': 'CD', 'usb': 'USB' }
 
-NET_CLASS_LIST = ( 'vim.vm.device.VirtualE1000',
-                   'vim.vm.device.VirtualE1000e',
-                   'vim.vm.device.VirtualPCNet32',
-                   'vim.vm.device.VirtualVmxnet',
-                   'vim.vm.device.VirtualVmxnet2',
-                   'vim.vm.device.VirtualVmxnet3'
-                   )
+NET_CLASS_MAP = { 'E1000': 'vim.vm.device.VirtualE1000',
+                  'E1000e': 'vim.vm.device.VirtualE1000e',
+                  'PCNet32': 'vim.vm.device.VirtualPCNet32',
+                  'VMXNet': 'vim.vm.device.VirtualVmxnet',
+                  'VMXNet2': 'vim.vm.device.VirtualVmxnet2',
+                  'VMXNet3': 'vim.vm.device.VirtualVmxnet3'
+                  }
 
 
 class MOBNotFound( Exception ):
@@ -33,7 +33,7 @@ def _connect( paramaters ):
   import ssl
   _create_unverified_https_context = ssl._create_unverified_context
   ssl._create_default_https_context = _create_unverified_https_context
-  # TODO: flag fortrusting SSL of connection, also there is a paramater to Connect for verified SSL
+  # TODO: flag for trusting SSL of connection, also there is a paramater to Connect for verified SSL
 
   logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( paramaters[ 'host' ], paramaters[ 'username' ] ) )
 
@@ -293,7 +293,7 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
     configSpec.name = vm_name
     configSpec.memoryMB = int( vm_paramaters[ 'memory_size' ] )
     configSpec.numCPUs = int( vm_paramaters[ 'cpu_count' ] )
-    configSpec.guestId = 'debian5_64Guest'
+    configSpec.guestId = vm_paramaters[ 'guest_id' ]
 
     configSpec.files = vim.vm.FileInfo()
     configSpec.files.vmPathName = vmx_file_path
@@ -332,9 +332,14 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
       interface = vm_paramaters[ 'interface_list' ][ i ]
       network = _getNetwork( host, interface[ 'network' ] )
 
+      try:
+        devClass = NET_CLASS_MAP[ interface.get( 'type', 'E1000' ) ]
+      except KeyError:
+        raise ValueError( 'Unknown interface type "{0}"'.format( interface[ 'type' ] ) )
+
       devSpec = vim.vm.device.VirtualDeviceSpec()
       devSpec.operation = 'add'
-      devSpec.device = vim.vm.device.VirtualE1000()  # look up the class from the interface[ 'type' ] in NET_CLASS_LIST
+      devSpec.device = devClass()
       devSpec.device.key = 4000 + i
       devSpec.device.controllerKey = 100
       devSpec.device.addressType = 'Manual'
@@ -346,6 +351,14 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
 
     configSpec.bootOptions.bootOrder.append( vim.vm.BootOptions.BootableEthernetDevice( deviceKey=4000 ) )  # TODO: figure out which is the boot drive and put it here
     configSpec.bootOptions.bootOrder.append( vim.vm.BootOptions.BootableDiskDevice( deviceKey=2000 ) )  # TODO: figure out which is the provisinioning interface and set it here
+
+    veu = vm_paramaters[ 'flags' ].get( 'virtual_exec_usage', None )
+    if veu == 'on':
+      configSpec.flags.virtualExecUsage = 'hvOn'
+    elif veu == 'off':
+      configSpec.flags.virtualExecUsage = 'hvOff'
+    elif veu == 'auto':
+      configSpec.flags.virtualExecUsage = 'hvAuto'
 
     task = folder.CreateVm( config=configSpec, pool=resourcePool, host=host )
 
@@ -445,7 +458,7 @@ def get_interface_map( paramaters ):
     vm = _getVM( si, vm_uuid )
 
     for device in vm.config.hardware.device:
-      if device.__class__.__name__ in NET_CLASS_LIST:
+      if device.__class__.__name__ in NET_CLASS_MAP.keys():
         i = device.key - 4000
         if i < 0 or i > 64:
           raise ValueError( 'Invalid device key "{0}"'.format( device.key ) )
