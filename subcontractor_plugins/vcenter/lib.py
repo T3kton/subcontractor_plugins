@@ -352,7 +352,7 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
     configSpec.bootOptions.bootOrder.append( vim.vm.BootOptions.BootableEthernetDevice( deviceKey=4000 ) )  # TODO: figure out which is the boot drive and put it here
     configSpec.bootOptions.bootOrder.append( vim.vm.BootOptions.BootableDiskDevice( deviceKey=2000 ) )  # TODO: figure out which is the provisinioning interface and set it here
 
-    veu = vm_paramaters[ 'flags' ].get( 'virtual_exec_usage', None )
+    veu = vm_paramaters.get( 'virtual_exec_usage', None )
     if veu == 'on':
       configSpec.flags.virtualExecUsage = 'hvOn'
     elif veu == 'off':
