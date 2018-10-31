@@ -14,6 +14,7 @@ clean:
 	./setup.py clean
 	$(RM) -fr build
 	$(RM) -f dpkg
+	dh_clean
 
 dpkg-distros:
 	echo xenial

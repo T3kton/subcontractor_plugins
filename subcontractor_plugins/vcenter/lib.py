@@ -271,7 +271,7 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
 
   # vcenter static mac are 00:50:56:00:00:00 -> 00:50:56:3F:FF:FF
   for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
-    mac = '005056{0:06x}'.format( random.randint( 0, 4194303 ) )  # TODO: check to see if the mac is allready in use
+    mac = '005056{0:06x}'.format( random.randint( 0, 4194303 ) )  # TODO: check to see if the mac is allready in use, also make them sequential
     vm_paramaters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
 
   logging.info( 'vcenter: creating vm "{0}"'.format( vm_name ) )
@@ -490,7 +490,13 @@ def set_power( paramaters ):
     elif desired_state == 'off':
       task = vm.PowerOff()
     elif desired_state == 'soft_off':
-      vm.ShutdownGuest()
+      try:
+        vm.ShutdownGuest()  # no Task
+      except vim.fault.ToolsUnavailable:
+        task = vm.PowerOff()
+
+    # if it won't power off
+    # vm.terminateVM()  # no Task
 
     if task is not None:
       while task.info.state not in ( vim.TaskInfo.State.success, vim.TaskInfo.State.error ):
