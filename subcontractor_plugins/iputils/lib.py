@@ -19,7 +19,7 @@ def ping( paramaters ):
 def port_state( paramaters ):
   target = paramaters[ 'target' ]
   try:
-    port = int( paramaters[ 'port' ] )
+    port = paramaters[ 'port' ]
   except TypeError:
     raise ValueError( 'Port paramater must be an integer' )
 

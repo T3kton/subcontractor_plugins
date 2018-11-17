@@ -14,6 +14,7 @@ clean:
 	./setup.py clean
 	$(RM) -fr build
 	$(RM) -f dpkg
+	$(RM) -fr htmlcov
 	dh_clean
 
 dpkg-distros:

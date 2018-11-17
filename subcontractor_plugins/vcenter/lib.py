@@ -6,6 +6,8 @@ import random
 from pyVim import connect
 from pyVmomi import vim
 
+from subcontractor_plugins.vcenter.images import OVAHandler
+
 CLEAN_POWER_DOWN_COUNT = 20
 
 CREATE_GROUP = ''
@@ -13,15 +15,20 @@ CREATE_GROUPS = []
 CREATE_FLAGS = ''
 CREATE_OS_TYPE_ID = 'Ubuntu_64'
 
-BOOT_ORDER_MAP = { 'hdd': 'HDD', 'net': 'NET', 'cd': 'CD', 'usb': 'USB' }
+BOOT_ORDER_MAP = {
+                    'hdd': vim.vm.BootOptions.BootableDiskDevice( deviceKey=2000 ),  # TODO: figure out which is the boot drive and put it here
+                    'net': vim.vm.BootOptions.BootableEthernetDevice( deviceKey=4000 ),  # TODO: figure out which is the provisinioning interface and set it here
+                    'cd': 'CD',
+                    'usb': 'USB'
+                 }
 
-NET_CLASS_LIST = ( 'vim.vm.device.VirtualE1000',
-                   'vim.vm.device.VirtualE1000e',
-                   'vim.vm.device.VirtualPCNet32',
-                   'vim.vm.device.VirtualVmxnet',
-                   'vim.vm.device.VirtualVmxnet2',
-                   'vim.vm.device.VirtualVmxnet3'
-                   )
+NET_CLASS_MAP = { 'E1000': vim.vm.device.VirtualE1000,
+                  'E1000e': vim.vm.device.VirtualE1000e,
+                  'PCNet32': vim.vm.device.VirtualPCNet32,
+                  'VMXNet': vim.vm.device.VirtualVmxnet,
+                  'VMXNet2': vim.vm.device.VirtualVmxnet2,
+                  'VMXNet3': vim.vm.device.VirtualVmxnet3
+                  }
 
 
 class MOBNotFound( Exception ):
@@ -33,7 +40,7 @@ def _connect( paramaters ):
   import ssl
   _create_unverified_https_context = ssl._create_unverified_context
   ssl._create_default_https_context = _create_unverified_https_context
-  # TODO: flag fortrusting SSL of connection, also there is a paramater to Connect for verified SSL
+  # TODO: flag for trusting SSL of connection, also there is a paramater to Connect for verified SSL
 
   logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( paramaters[ 'host' ], paramaters[ 'username' ] ) )
 
@@ -54,7 +61,7 @@ def _taskWait( task ):
     except AttributeError:
       logging.debug( 'vmware: Waiting ...' )
 
-    time.sleep( 1 )
+    time.sleep( 2 )
 
 
 def _getDatacenter( si, name ):
@@ -81,7 +88,7 @@ def _getHost( rp, name ):
     if host.name == name:
       return host
 
-  raise MOBNotFound( 'Host "{0}" in "{0}" not found'.format( name, rp.name ) )
+  raise MOBNotFound( 'Host "{0}" in "{1}" not found'.format( name, rp.name ) )
 
 
 def _getDatastore( dc, name ):
@@ -89,7 +96,7 @@ def _getDatastore( dc, name ):
     if ds.name == name:
       return ds
 
-  raise MOBNotFound( 'Datastore "{0}" in "{0}" not found'.format( name, dc.name ) )
+  raise MOBNotFound( 'Datastore "{0}" in "{1}" not found'.format( name, dc.name ) )
 
 
 def _getNetwork( host, name ):
@@ -97,7 +104,7 @@ def _getNetwork( host, name ):
     if network.name == name:
       return network
 
-  raise MOBNotFound( 'Network "{0}" in "{0}" not found'.format( name, host.name ) )
+  raise MOBNotFound( 'Network "{0}" in "{1}" not found'.format( name, host.name ) )
 
 
 def _getVM( si, vm_uuid ):
@@ -128,7 +135,6 @@ def host_list( paramaters ):
   # orderd by paramater[ 'cpu_scaler' ] * % cpu remaning + paramater[ 'memory_scaler' ] * % mem remaning
   connection_paramaters = paramaters[ 'connection' ]
   logging.info( 'vcenter: getting Host List for dc: "{0}"  rp: "{1}"'.format( paramaters[ 'datacenter' ], paramaters[ 'cluster' ] ) )
-  paramaters[ 'min_memory' ] = int( paramaters[ 'min_memory' ] )
   si = _connect( connection_paramaters )
   try:
     dataCenter = _getDatacenter( si, paramaters[ 'datacenter' ] )
@@ -145,7 +151,7 @@ def host_list( paramaters ):
       total_cpu = host.summary.hardware.numCpuCores * host.summary.hardware.cpuMhz
       cpu_aviable = total_cpu - host.summary.quickStats.overallCpuUsage
 
-      host_map[ host.name ] = ( int( paramaters[ 'memory_scaler' ] ) * ( memory_aviable / total_memory ) ) + ( int( paramaters[ 'cpu_scaler' ] ) * ( cpu_aviable / total_cpu ) )
+      host_map[ host.name ] = ( paramaters[ 'memory_scaler' ] * ( memory_aviable / total_memory ) ) + ( paramaters[ 'cpu_scaler' ] * ( cpu_aviable / total_cpu ) )
 
     logging.debug( 'vcenter: host_map {0}'.format( host_map ) )
 
@@ -201,7 +207,7 @@ def datastore_list( paramaters ):
   # orderd by paramater[ 'cpu_scaler' ] * % cpu remaning + paramater[ 'memory_scaler' ] * % mem remaning
   connection_paramaters = paramaters[ 'connection' ]
   logging.info( 'vcenter: getting Datastore List for dc: "{0}" rp: "{1}" host: "{2}"'.format( paramaters[ 'datacenter' ], paramaters[ 'cluster' ], paramaters[ 'host' ] ) )
-  paramaters[ 'min_free_space' ] = int( paramaters[ 'min_free_space' ] )
+  paramaters[ 'min_free_space' ] = paramaters[ 'min_free_space' ]
   try:
     paramaters[ 'name_regex' ] = re.compile( paramaters[ 'name_regex' ] )
   except TypeError:
@@ -248,9 +254,9 @@ def _createDisk( si, dc, disk, datastore, file_path ):
     raise Exception( 'Unexpected Task State when checking directory: "{0}"'.format( task.info.state ) )
 
   spec = vim.VirtualDiskManager.FileBackedVirtualDiskSpec()
-  spec.diskType = 'thin'  # 'eagerZeroedThick', 'preallocate'
-  spec.adapterType = 'busLogic'  # 'ide', 'lsiLogic'
-  spec.capacityKb = int( disk[ 'size' ] ) * 1024 * 1024
+  spec.diskType = disk.get( 'type', 'thin' )  # 'thin', 'eagerZeroedThick', 'preallocate'
+  spec.adapterType = disk.get( 'adapter', 'busLogic' )  # 'busLogic', 'ide', 'lsiLogic'
+  spec.capacityKb = disk.get( 'size', 10 ) * 1024 * 1024
 
   logging.debug( 'vcenter: creating disk "{0}"'.format( file_path ) )
 
@@ -262,6 +268,161 @@ def _createDisk( si, dc, disk, datastore, file_path ):
 
   if task.info.state != 'success':
     raise Exception( 'Unexpected Task State when Creating Disk: "{0}"'.format( task.info.state ) )
+
+
+def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
+  logging.info( 'vcenter: creating from OVA("{0}") "{1}"'.format( vm_paramaters[ 'ova' ], vm_name ) )
+  handler = OVAHandler( vm_paramaters[ 'ova' ] )
+
+  ovfManager = si.content.ovfManager
+
+  network_mapping = []
+  for interface in vm_paramaters[ 'interface_list' ]:
+    network_mapping.append( vim.OvfManager.NetworkMapping( name=interface[ 'physical_location' ], network=_getNetwork( host, interface[ 'network' ] ) ) )
+
+  property_map = []
+  try:
+    for key, value in vm_paramaters[ 'property_map' ].items():
+      property_map.append( vim.KeyValue( key=key, value=value ) )
+  except KeyError:
+    pass
+
+  cisp = vim.OvfManager.CreateImportSpecParams( entityName=vm_name, hostSystem=host, propertyMapping=property_map, networkMapping=network_mapping )
+
+  try:
+    cisp.diskProvisioning = vm_paramaters[ 'disk_provisioning' ]
+  except KeyError:
+    pass
+
+  try:
+    cisp.deploymentOption = vm_paramaters[ 'deployment_option' ]
+  except KeyError:
+    pass
+
+  try:
+    cisp.ipProtocol = vm_paramaters[ 'ip_protocol' ]
+  except KeyError:
+    pass
+
+  logging.debug( 'vcenter: Import Spec Params: "{0}"'.format( cisp ) )
+
+  result = ovfManager.CreateImportSpec( handler.descriptor, resource_pool, datastore, cisp )
+
+  for property in result.importSpec.configSpec.vAppConfig.property:
+    info = property.info
+    if info.id in vm_paramaters[ 'property_map' ] and not info.userConfigurable:
+      logging.warning( 'Setting non user configurable "{0}" to configurable'.format( info.id ) )
+      info.userConfigurable = True
+
+  if len( result.warning ):
+    logging.warning( 'vcenter: Warning with OVA Import Spec: "{0}"'.format( result.warning ) )
+
+  if len( result.error ):
+    raise Exception( 'OVA Import Errors: "{0}"'.format( '","'.join( [ str( i ) for i in result.error ] ) ) )
+
+  return handler.upload( connection_host, resource_pool, result, data_center )
+
+
+def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
+  logging.info( 'vcenter: creating from scratch "{0}"'.format( vm_name ) )
+
+  vmx_file_path, disk_filepath_list = _genPaths( vm_paramaters[ 'name' ], vm_paramaters[ 'disk_list' ], datastore )
+
+  for i in range( 0, len( vm_paramaters[ 'disk_list' ] ) ):
+    _createDisk( si, data_center, vm_paramaters[ 'disk_list' ][ i ], datastore, disk_filepath_list[ i ] )
+
+  configSpec = vim.vm.ConfigSpec()
+  configSpec.name = vm_name
+  configSpec.memoryMB = vm_paramaters[ 'memory_size' ]
+  configSpec.numCPUs = vm_paramaters[ 'cpu_count' ]
+  configSpec.guestId = vm_paramaters[ 'guest_id' ]
+
+  configSpec.flags = vim.vm.FlagInfo()
+
+  configSpec.files = vim.vm.FileInfo()
+  configSpec.files.vmPathName = vmx_file_path
+
+  configSpec.bootOptions = vim.vm.BootOptions()
+  configSpec.bootOptions.bootDelay = 5000
+  configSpec.bootOptions.bootRetryEnabled = True
+  configSpec.bootOptions.bootRetryDelay = 50000
+
+  devSpec = vim.vm.device.VirtualDeviceSpec()
+  devSpec.operation = 'add'
+  devSpec.device = vim.vm.device.VirtualLsiLogicController()
+  devSpec.device.key = 1000
+  devSpec.device.sharedBus = 'noSharing'
+  devSpec.device.busNumber = 0
+  devSpec.device.controllerKey = 100
+  devSpec.device.unitNumber = 0
+  configSpec.deviceChange.append( devSpec )
+
+  for i in range( 0, len( vm_paramaters[ 'disk_list' ] ) ):
+    disk = vm_paramaters[ 'disk_list' ][ i ]
+    devSpec = vim.vm.device.VirtualDeviceSpec()
+    devSpec.operation = 'add'
+    devSpec.device = vim.vm.device.VirtualDisk()
+    devSpec.device.key = 2000 + i
+    devSpec.device.controllerKey = 1000
+    devSpec.device.capacityInKB = disk[ 'size' ] * 1024 * 1024
+    devSpec.device.unitNumber = i + 1
+    devSpec.device.backing = vim.vm.device.VirtualDisk.FlatVer2BackingInfo()
+    devSpec.device.backing.fileName = disk_filepath_list[ i ]
+    devSpec.device.backing.datastore = datastore
+    devSpec.device.backing.diskMode = 'persistent'
+    configSpec.deviceChange.append( devSpec )
+
+  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
+    interface = vm_paramaters[ 'interface_list' ][ i ]
+    network = _getNetwork( host, interface[ 'network' ] )
+
+    try:
+      devClass = NET_CLASS_MAP[ interface.get( 'type', 'E1000' ) ]
+    except KeyError:
+      raise ValueError( 'Unknown interface type "{0}"'.format( interface[ 'type' ] ) )
+
+    devSpec = vim.vm.device.VirtualDeviceSpec()
+    devSpec.operation = 'add'
+    devSpec.device = devClass()
+    devSpec.device.key = 4000 + i
+    devSpec.device.controllerKey = 100
+    devSpec.device.addressType = 'Manual'
+    devSpec.device.macAddress = interface[ 'mac' ]
+    devSpec.device.unitNumber = i + 7
+    devSpec.device.backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo()
+    devSpec.device.backing.deviceName = network.name
+    configSpec.deviceChange.append( devSpec )
+
+  for item in vm_paramaters[ 'boot_order' ]:
+    configSpec.bootOptions.bootOrder.append( BOOT_ORDER_MAP[ item ] )
+
+  veu = vm_paramaters.get( 'virtual_exec_usage', None )
+  if veu == 'on':
+    configSpec.flags.virtualExecUsage = 'hvOn'
+  elif veu == 'off':
+    configSpec.flags.virtualExecUsage = 'hvOff'
+  elif veu == 'auto':
+    configSpec.flags.virtualExecUsage = 'hvAuto'
+
+  vmu = vm_paramaters.get( 'virtual_mmu_usage', None )
+  if vmu == 'on':
+    configSpec.flags.virtualMmuUsage = 'on'
+  elif vmu == 'off':
+    configSpec.flags.virtualMmuUsage = 'off'
+  elif vmu == 'auto':
+    configSpec.flags.virtualMmuUsage = 'automatic'
+
+  task = folder.CreateVm( config=configSpec, pool=resource_pool, host=host )
+
+  _taskWait( task )
+
+  if task.info.state == 'error':
+    raise Exception( 'Error With VM Create Task: "{0}"'.format( task.info.error ) )
+
+  if task.info.state != 'success':
+    raise Exception( 'Unexpected Task State With VM Create: "{0}"'.format( task.info.state ) )
+
+  return task.info.result.config.instanceUuid
 
 
 def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore should be done prior to calling this, that way rollback can know where it's at
@@ -277,87 +438,16 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
   logging.info( 'vcenter: creating vm "{0}"'.format( vm_name ) )
   si = _connect( connection_paramaters )
   try:
-    dataCenter = _getDatacenter( si, vm_paramaters[ 'datacenter' ] )
-    resourcePool = _getResourcePool( dataCenter, vm_paramaters[ 'cluster' ] )
-    folder = dataCenter.vmFolder
-    host = _getHost( resourcePool, vm_paramaters[ 'host' ] )
-    datastore = _getDatastore( dataCenter, vm_paramaters[ 'datastore' ] )
+    data_center = _getDatacenter( si, vm_paramaters[ 'datacenter' ] )
+    resource_pool = _getResourcePool( data_center, vm_paramaters[ 'cluster' ] )
+    folder = data_center.vmFolder
+    host = _getHost( resource_pool, vm_paramaters[ 'host' ] )
+    datastore = _getDatastore( data_center, vm_paramaters[ 'datastore' ] )
 
-    vmx_file_path, disk_filepath_list = _genPaths( vm_paramaters[ 'name' ], vm_paramaters[ 'disk_list' ], datastore )
-
-    for i in range( 0, len( vm_paramaters[ 'disk_list' ] ) ):
-      disk = vm_paramaters[ 'disk_list' ][ i ]
-      _createDisk( si, dataCenter, disk, datastore, disk_filepath_list[ i ] )
-
-    configSpec = vim.vm.ConfigSpec()
-    configSpec.name = vm_name
-    configSpec.memoryMB = int( vm_paramaters[ 'memory_size' ] )
-    configSpec.numCPUs = int( vm_paramaters[ 'cpu_count' ] )
-    configSpec.guestId = 'debian5_64Guest'
-
-    configSpec.files = vim.vm.FileInfo()
-    configSpec.files.vmPathName = vmx_file_path
-
-    configSpec.bootOptions = vim.vm.BootOptions()
-    configSpec.bootOptions.bootDelay = 5000
-    configSpec.bootOptions.bootRetryEnabled = True
-    configSpec.bootOptions.bootRetryDelay = 50000
-
-    devSpec = vim.vm.device.VirtualDeviceSpec()
-    devSpec.operation = 'add'
-    devSpec.device = vim.vm.device.VirtualLsiLogicController()
-    devSpec.device.key = 1000
-    devSpec.device.sharedBus = 'noSharing'
-    devSpec.device.busNumber = 0
-    devSpec.device.controllerKey = 100
-    devSpec.device.unitNumber = 0
-    configSpec.deviceChange.append( devSpec )
-
-    for i in range( 0, len( vm_paramaters[ 'disk_list' ] ) ):
-      disk = vm_paramaters[ 'disk_list' ][ i ]
-      devSpec = vim.vm.device.VirtualDeviceSpec()
-      devSpec.operation = 'add'
-      devSpec.device = vim.vm.device.VirtualDisk()
-      devSpec.device.key = 2000 + i
-      devSpec.device.controllerKey = 1000
-      devSpec.device.capacityInKB = int( disk[ 'size' ] ) * 1024 * 1024
-      devSpec.device.unitNumber = i + 1
-      devSpec.device.backing = vim.vm.device.VirtualDisk.FlatVer2BackingInfo()
-      devSpec.device.backing.fileName = disk_filepath_list[ i ]
-      devSpec.device.backing.datastore = datastore
-      devSpec.device.backing.diskMode = 'persistent'
-      configSpec.deviceChange.append( devSpec )
-
-    for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
-      interface = vm_paramaters[ 'interface_list' ][ i ]
-      network = _getNetwork( host, interface[ 'network' ] )
-
-      devSpec = vim.vm.device.VirtualDeviceSpec()
-      devSpec.operation = 'add'
-      devSpec.device = vim.vm.device.VirtualE1000()  # look up the class from the interface[ 'type' ] in NET_CLASS_LIST
-      devSpec.device.key = 4000 + i
-      devSpec.device.controllerKey = 100
-      devSpec.device.addressType = 'Manual'
-      devSpec.device.macAddress = interface[ 'mac' ]
-      devSpec.device.unitNumber = i + 7
-      devSpec.device.backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo()
-      devSpec.device.backing.deviceName = network.name
-      configSpec.deviceChange.append( devSpec )
-
-    configSpec.bootOptions.bootOrder.append( vim.vm.BootOptions.BootableEthernetDevice( deviceKey=4000 ) )  # TODO: figure out which is the boot drive and put it here
-    configSpec.bootOptions.bootOrder.append( vim.vm.BootOptions.BootableDiskDevice( deviceKey=2000 ) )  # TODO: figure out which is the provisinioning interface and set it here
-
-    task = folder.CreateVm( config=configSpec, pool=resourcePool, host=host )
-
-    _taskWait( task )
-
-    if task.info.state == 'error':
-      raise Exception( 'Error With VM Create Task: "{0}"'.format( task.info.error ) )
-
-    if task.info.state != 'success':
-      raise Exception( 'Unexpected Task State With VM Create: "{0}"'.format( task.info.state ) )
-
-    vm_uuid = task.info.result.config.instanceUuid
+    if 'ova' in vm_paramaters:
+      vm_uuid = _create_from_ova( si, vm_name, paramaters[ 'connection' ][ 'host' ], data_center, resource_pool, folder, host, datastore, vm_paramaters )
+    else:
+      vm_uuid = _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters )
 
     logging.info( 'vcenter: vm "{0}" created, uuid: "{1}"'.format( vm_name, vm_uuid ) )
 
@@ -380,7 +470,7 @@ def create_rollback( paramaters ):
 
     vmx_file_path, disk_filepath_list = _genPaths( vm_paramaters[ 'name' ], vm_paramaters[ 'disk_list' ], datastore )
 
-    file_list = disk_filepath_list + [ vmx_file_path ]
+    file_list = disk_filepath_list + [ i.replace( '.vmdk', '-flat.vmdk' ) for i in disk_filepath_list ] + [ vmx_file_path ]
 
     for item in file_list:
       logging.debug( 'vcenter: deleting "{0}"'.format( item ) )
@@ -445,7 +535,7 @@ def get_interface_map( paramaters ):
     vm = _getVM( si, vm_uuid )
 
     for device in vm.config.hardware.device:
-      if device.__class__.__name__ in NET_CLASS_LIST:
+      if device.__class__ in NET_CLASS_MAP.values():
         i = device.key - 4000
         if i < 0 or i > 64:
           raise ValueError( 'Invalid device key "{0}"'.format( device.key ) )
@@ -501,7 +591,7 @@ def set_power( paramaters ):
     if task is not None:
       while task.info.state not in ( vim.TaskInfo.State.success, vim.TaskInfo.State.error ):
         logging.debug( 'vcenter: vm "{0}"({1}) power "{2}" at {3}%'.format( vm_name, vm_uuid, desired_state, task.info.progress ) )
-        time.sleep( 1 )
+        time.sleep( 2 )
 
       if task.info.state == vim.TaskInfo.State.error:
         raise Exception( 'vcenter: Unable to set power state of "{0}"({1}) to "{2}"'.format( vm_name, vm_uuid, desired_state ) )
