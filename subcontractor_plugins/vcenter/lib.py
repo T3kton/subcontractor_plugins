@@ -280,6 +280,8 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
   for interface in vm_paramaters[ 'interface_list' ]:
     network_mapping.append( vim.OvfManager.NetworkMapping( name=interface[ 'physical_location' ], network=_getNetwork( host, interface[ 'network' ] ) ) )
 
+  # TODO: if deploying to ESXi directly, need --X:injectOvfEnv
+
   property_map = []
   try:
     for key, value in vm_paramaters[ 'property_map' ].items():
