@@ -14,13 +14,14 @@ clean:
 	./setup.py clean
 	$(RM) -fr build
 	$(RM) -f dpkg
+	$(RM) -fr htmlcov
 	dh_clean
 
 dpkg-distros:
 	echo xenial
 
 dpkg-requires:
-	echo dpkg-dev debhelper cdbs python3-dev python3-setuptools
+	echo dpkg-dev debhelper python3-dev python3-setuptools
 
 dpkg:
 	dpkg-buildpackage -b -us -uc

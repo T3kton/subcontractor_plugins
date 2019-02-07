@@ -1,3 +1,10 @@
+subcontractor-plugins (0.2-1) xenial; urgency=medium
+
+  * vmware work
+  * goes with contractor-plugins 0.2
+
+ -- Peter <peter@xps13-01>  Wed, 17 Oct 2018 13:14:05 -0600
+
 subcontractor-plugins (0.1-1) xenial; urgency=medium
 
   * Initial release.

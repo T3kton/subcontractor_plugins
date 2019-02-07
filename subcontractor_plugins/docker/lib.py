@@ -26,12 +26,10 @@ def create( paramaters ):
   except Exception as e:
     raise Exception( 'Error Creating Container: {0}'.format( str( e ) ) )
 
-  port_map = dict( [ ( k, int( v) ) for k, v in paramaters[ 'port_map' ].items() ] )
-
   container_paramaters = {
                           'image': paramaters[ 'docker_image' ],
                           'name': container_name,
-                          'ports': port_map
+                          'ports': paramaters[ 'port_map' ]
                          }
 
   logging.debug( 'docker: creating "{0}"'.format( container_paramaters ) )
