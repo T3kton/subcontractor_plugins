@@ -1,6 +1,3 @@
-WARNING!!! this is not workable yet, hopfully soon.
-
-
 Subcontractor Plugins
 =====================
 
@@ -16,3 +13,4 @@ the IPMI and iputils (for ping testing the IPMI interfaces).
 This way network segmentation can be maintained.  Each instance
 will need HTTP(s) which can be proxied back to contractor.
 
+see http://t3kton.github.io

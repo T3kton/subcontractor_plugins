@@ -15,6 +15,8 @@ from urllib import request
 from pyVmomi import vim, vmodl
 from tempfile import NamedTemporaryFile
 
+from subcontractor_plugins.common.Packrat import HTTPErrorProcessorPassthrough, packrat_from_url
+
 PROGRESS_INTERVAL = 10  # in seconds
 WEB_HANDLE_TIMEOUT = 60  # in seconds
 
@@ -35,15 +37,18 @@ def _get_tarfile_size( tarfile ):
   return size
 
 
-def _create_file_handle( entry ):
-  """
-  A simple mechanism to pick whether the file is local or not.
-  This is not very robust.
-  """
-  if os.path.exists( entry ):
-    return FileHandle( entry )
+def _create_file_handle( url ):
+  if url.startswith( ( 'packrat://', 'packrats://' ) ):
+    return PackratHandle( url )
+
+  elif url.startswith( ( 'http://', 'https://' ) ):
+    return WebHandle( url )
+
+  elif url.startswith( 'file://' ):
+    return FileHandle( url[ 7: ] )
+
   else:
-    return WebHandle( entry )
+    raise ValueError( 'Unknown scheme' )
 
 
 class Lease:
@@ -108,6 +113,7 @@ class Lease:
     except Exception as e:  # don't renew the timer
       logging.warning( 'Lease: Exception during _timer_cb: "{0}"'.format( e ) )
       self.cont = False
+
 
 #  TODO: validate the hashes against the .mf file, so far SHA256 and SHA1 hashes are used
 class OVAHandler:
@@ -194,21 +200,21 @@ class VMDKHandler:
     self.handle = _create_file_handle( vmdk_file )
 
   def upload( self, host, resource_pool, datacenter ):
+    raise Exception( 'Not implemented' )
 
-    url = deviceUrl.url.replace( '*', host )
-    headers = { 'Content-length': self.handle.st_size }
-    if hasattr( ssl, '_create_unverified_context' ):
-      sslContext = ssl._create_unverified_context()
-    else:
-      sslContext = None
-
-    try:
-      req = request.Request( url, self.handle, headers )
-      request.urlopen( req, context=sslContext )
-
-    except Exception as e:
-      logging.error( 'OVAHandler: Exception Uploading "{0}", info:"{1}": "{2}"'.format( e, lease.info, fileItem ))
-      raise e
+    # headers = { 'Content-length': self.handle.st_size }
+    # if hasattr( ssl, '_create_unverified_context' ):
+    #   sslContext = ssl._create_unverified_context()
+    # else:
+    #   sslContext = None
+    #
+    # try:
+    #   req = request.Request( url, self.handle, headers )
+    #   request.urlopen( req, context=sslContext )
+    #
+    # except Exception as e:
+    #   logging.error( 'OVAHandler: Exception Uploading "{0}"'.format( e ) )
+    #   raise e
 
 
 class FileHandle:
@@ -253,11 +259,6 @@ class FileHandle:
     return int( 100.0 * self.offset / self.st_size )
 
 
-class HTTPErrorProcessorPassthrough( request.HTTPErrorProcessor ):
-  def http_response( self, request, response ):
-    return response
-
-
 class WebSourceException( Exception ):
   pass
 
@@ -268,12 +269,12 @@ class WebHandle( FileHandle ):
     proxy = None
     self.url = url
 
-    logging.info( 'WebHandle: Downloading "{0}"'.format( url ))
-
     if proxy:  # not doing 'is not None', so empty strings don't try and proxy   # have a proxy option to take it from the envrionment vars
       self.opener = request.build_opener( HTTPErrorProcessorPassthrough, request.ProxyHandler( { 'http': proxy, 'https': proxy } ) )
     else:
       self.opener = request.build_opener( HTTPErrorProcessorPassthrough, request.ProxyHandler( {} ) )
+
+    logging.info( 'WebHandle: Downloading "{0}"'.format( url ))
 
     try:
       resp = self.opener.open( self.url, timeout=WEB_HANDLE_TIMEOUT )
@@ -299,7 +300,7 @@ class WebHandle( FileHandle ):
       raise WebSourceException( 'Invalid Response code "{0}"'.format( resp.code ) )
 
     self.cache_file = NamedTemporaryFile( mode='wb', prefix='subcontractor_vmware_' )
-    size = int( resp.headers['content-length'] )
+    size = int( resp.headers[ 'content-length' ] )
 
     buff = resp.read( 4096 * 1024 )
     cp = datetime.utcnow()
@@ -321,3 +322,14 @@ class WebHandle( FileHandle ):
       self.cache_file.close()
     except AttributeError:
       pass
+
+
+class PackratHandle( WebHandle ):
+  def __init__( self, url ):
+    proxy = None
+    logging.debug( 'PackratHandle: url: "{0}"'.format( url ) )
+    packrat, file = packrat_from_url( url, 'rsc', proxy )  # TODO: chage to 'ova'
+    url = packrat.fileURL( file )
+    if url is None:
+      raise ValueError( 'Unable to get file url' )
+    super().__init__( url )
