@@ -1,5 +1,5 @@
 import logging
-import virtualbox
+#import virtualbox
 import time
 import os
 import random
@@ -15,9 +15,17 @@ CREATE_OS_TYPE_ID = 'Ubuntu_64'
 BOOT_ORDER_MAP = { 'hdd': virtualbox.library.DeviceType.hard_disk, 'net': virtualbox.library.DeviceType.network, 'cd': virtualbox.library.DeviceType.dvd, 'usb': virtualbox.library.DeviceType.usb }
 
 
+def _connect( paramaters ):
+  logging.debug( 'virtualbox: connecting to "{0}" with user "{1}"'.format( paramaters[ 'host' ], paramaters[ 'user' ] ) )
+  #WebServiceManager( url='http://10.0.0.1:18083' )
+
+  return connect.Connect( url='http://{0}'.format( paramaters[ 'host' ] ) )
+
+
 def create( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
   vm_paramaters = paramaters[ 'vm' ]
-  vm_name = paramaters[ 'name' ]
+  vm_name = vm_paramaters[ 'name' ]
 
   # virtualbox static mac are 08:00:27:00:00:00 -> 08:00:27:FF:FF:FF
   for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
@@ -25,7 +33,7 @@ def create( paramaters ):
     vm_paramaters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
 
   logging.info( 'virtualbox: creating vm "{0}"'.format( vm_name ) )
-  vbox = virtualbox.VirtualBox()
+  vbox = _connect( connection_paramaters )
 
   settings_file = vbox.compose_machine_filename( vm_name.encode(), CREATE_GROUP, CREATE_FLAGS, vbox.system_properties.default_machine_folder )
   vm = vbox.create_machine( settings_file, vm_name, CREATE_GROUPS, CREATE_OS_TYPE_ID, CREATE_FLAGS )
@@ -131,10 +139,11 @@ def create( paramaters ):
 
 
 def create_rollback( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
   vm_paramaters = paramaters[ 'vm' ]
-  vm_name = paramaters[ 'name' ]
+  vm_name = vm_paramaters[ 'name' ]
   logging.info( 'virtualbox: rolling back vm "{0}"'.format( vm_name ) )
-  vbox = virtualbox.VirtualBox()
+  vbox = _connect( connection_paramaters )
 
   try:
     vm = vbox.find_machine( vm_name )
@@ -173,10 +182,11 @@ def create_rollback( paramaters ):
 
 
 def destroy( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
   vm_uuid = paramaters[ 'uuid' ]
   vm_name = paramaters[ 'name' ]
   logging.info( 'virtualbox: destroying vm "{0}"({1})'.format( vm_name, vm_uuid ) )
-  vbox = virtualbox.VirtualBox()
+  vbox = _connect( connection_paramaters )
 
   try:
     vm = vbox.find_machine( vm_uuid )
@@ -194,11 +204,12 @@ def destroy( paramaters ):
 
 
 def get_interface_map( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
   vm_uuid = paramaters[ 'uuid' ]
   vm_name = paramaters[ 'name' ]
   interface_list = []
   logging.info( 'virtualbox: getting interface map "{0}"({1})'.format( vm_name, vm_uuid ) )
-  vbox = virtualbox.VirtualBox()
+  vbox = _connect( connection_paramaters )
 
   vm = vbox.find_machine( vm_name )
 
@@ -224,11 +235,12 @@ def _power_state_convert( state ):
 
 
 def set_power( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
   vm_uuid = paramaters[ 'uuid' ]
   vm_name = paramaters[ 'name' ]
   desired_state = paramaters[ 'state' ]
   logging.info( 'virtualbox: setting power state of "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, desired_state ) )
-  vbox = virtualbox.VirtualBox()
+  vbox = _connect( connection_paramaters )
 
   vm = vbox.find_machine( vm_name )
 
@@ -262,10 +274,11 @@ def set_power( paramaters ):
 
 
 def power_state( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
   vm_uuid = paramaters[ 'uuid' ]
   vm_name = paramaters[ 'name' ]
   logging.info( 'virtualbox: getting "{0}"({1}) power state...'.format( vm_name, vm_uuid ) )
-  vbox = virtualbox.VirtualBox()
+  vbox = _connect( connection_paramaters )
 
   vm = vbox.find_machine( vm_uuid )
 
