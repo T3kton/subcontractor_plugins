@@ -1,25 +1,24 @@
 import logging
-#import virtualbox
 import time
 import os
 import random
 
+from subcontractor_plugins.virtualbox import constants
+from subcontractor_plugins.virtualbox.client import VirtualBox, VirtualBoxNotFound
 
 CLEAN_POWER_DOWN_COUNT = 20
 
 CREATE_GROUP = ''
 CREATE_GROUPS = []
 CREATE_FLAGS = ''
-CREATE_OS_TYPE_ID = 'Ubuntu_64'
 
-BOOT_ORDER_MAP = { 'hdd': virtualbox.library.DeviceType.hard_disk, 'net': virtualbox.library.DeviceType.network, 'cd': virtualbox.library.DeviceType.dvd, 'usb': virtualbox.library.DeviceType.usb }
+BOOT_ORDER_MAP = { 'hdd': constants.DeviceType.HardDisk, 'net': constants.DeviceType.Network, 'cd': constants.DeviceType.DVD, 'usb': constants.DeviceType.USB }
 
 
 def _connect( paramaters ):
-  logging.debug( 'virtualbox: connecting to "{0}" with user "{1}"'.format( paramaters[ 'host' ], paramaters[ 'user' ] ) )
-  #WebServiceManager( url='http://10.0.0.1:18083' )
+  logging.debug( 'virtualbox: connecting to "{0}" with user "{1}"'.format( paramaters[ 'host' ], paramaters[ 'username' ] ) )
 
-  return connect.Connect( url='http://{0}'.format( paramaters[ 'host' ] ) )
+  return VirtualBox( 'http://{0}:18083/'.format( paramaters[ 'host' ] ), paramaters[ 'username' ], paramaters[ 'password' ] )
 
 
 def create( paramaters ):
@@ -35,104 +34,108 @@ def create( paramaters ):
   logging.info( 'virtualbox: creating vm "{0}"'.format( vm_name ) )
   vbox = _connect( connection_paramaters )
 
-  settings_file = vbox.compose_machine_filename( vm_name.encode(), CREATE_GROUP, CREATE_FLAGS, vbox.system_properties.default_machine_folder )
-  vm = vbox.create_machine( settings_file, vm_name, CREATE_GROUPS, CREATE_OS_TYPE_ID, CREATE_FLAGS )
+  settings_file = vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties[ 'default_machine_folder' ] )
+  vm = vbox.create_machine( settings_file, vm_name, CREATE_GROUPS, vm_paramaters[ 'guest_type' ], CREATE_FLAGS )
   vm.memory_size = vm_paramaters[ 'memory_size' ]  # in Meg
 
   disk_controller_name = 'SCSI'
-  vm.add_storage_controller( disk_controller_name, virtualbox.library.StorageBus.scsi )
+  vm.add_storage_controller( disk_controller_name, constants.StorageBus.SCSI )
   cd_controller_name = 'SATA'
-  vm.add_storage_controller( cd_controller_name, virtualbox.library.StorageBus.sata )
+  vm.add_storage_controller( cd_controller_name, constants.StorageBus.SATA )
 
   vm.save_settings()
   logging.debug( 'virtualbox: regestering vm "{0}"'.format( vm_name ) )
   vbox.register_machine( vm )
 
-  session = vm.create_session( virtualbox.library.LockType.write )
-  vm2 = session.machine
+  vm.lock( vbox.session, constants.LockType.Write )
+  try:
+    vm2 = vbox.session.machine
 
-  for i in range( 0, vbox.system_properties.max_boot_position  ):
-    vm2.set_boot_order( i + 1, virtualbox.library.DeviceType.null )
+    for i in range( 0, vbox.system_properties[ 'max_boot_position' ] ):
+      vm2.set_boot_order( i + 1, constants.DeviceType.Null )
 
-  for i in range( 0, 4 ):
-    adapter = vm2.get_network_adapter( i  )
-    adapter.enabled = False
-
-  disk_port = 0
-  cd_port = 0
-  for disk in vm_paramaters[ 'disk_list' ]:
-    disk_name = disk[ 'name' ]
-    logging.debug( 'vritualbox: creating disk "{0}" on "{1}"'.format( disk_name, vm_name ) )
-    if 'file' in disk:
-      disk_file = disk[ 'file' ]
-
-      if disk_file.endswith( '.iso' ):
-        medium = vbox.open_medium( disk_file, virtualbox.library.DeviceType.dvd, virtualbox.library.AccessMode.read_only, True )
-        vm2.attach_device( cd_controller_name, cd_port, 0, virtualbox.library.DeviceType.dvd, medium )
-        cd_port += 1
-
-      else:
-        medium = vbox.open_medium( disk_file, virtualbox.library.DeviceType.hard_disk, virtualbox.library.AccessMode.read_write, True )
-        vm2.attach_device( disk_controller_name, disk_port, 0, virtualbox.library.DeviceType.hard_disk, medium )
-        disk_port += 1
-
-    else:
-      disk_size = disk.get( 'size', 10 ) * 1024 * 1024 * 1024  # disk_size is in bytes, we were pass in G
-      disk_format = 'vdi'
-      location = '{0}/{1}.vdi'.format( os.path.dirname( vm.settings_file_path ), disk_name )
-      medium = vbox.create_medium( disk_format, location, virtualbox.library.AccessMode.read_write, virtualbox.library.DeviceType.hard_disk )
-      progress = medium.create_base_storage( disk_size, [ virtualbox.library.MediumVariant.standard ] )
-      while not progress.completed:
-        logging.debug( 'virtualbox: creating storage for "{0}" disk "{1}" at {2}%, {3} seconds left'.format( vm_name, disk_name, progress.percent, progress.time_remaining ) )
-        time.sleep( 1 )
-
-      if medium.state != virtualbox.library.MediumState.created:
-        raise Exception( 'disk "{0}" for vm "{1}" faild to create: "{2}"'.format( disk_name, vm_name, progress.error_info.text ) )
-
-      vm2.attach_device( disk_controller_name, disk_port, 0, virtualbox.library.DeviceType.hard_disk, medium )
-      disk_port += 1
-
-  interface_list = []
-  for i in range( 0, 4 ):
-    adapter = vm2.get_network_adapter( i )
-    if i < len( vm_paramaters[ 'interface_list' ] ):
-      iface = vm_paramaters[ 'interface_list' ][ i ]
-      adapter.enabled = True
-      adapter.mac_address = iface[ 'mac' ]
-
-      if iface[ 'type' ] == 'host':
-        adapter.attachment_type = virtualbox.library.NetworkAttachmentType.host_only
-        adapter.host_only_interface = iface[ 'network' ]
-
-      elif iface[ 'type' ] == 'bridge':
-        adapter.attachment_type = virtualbox.library.NetworkAttachmentType.bridged
-        adapter.bridged_interface = iface[ 'network' ]
-
-      elif iface[ 'type' ] == 'nat':
-        adapter.attachment_type = virtualbox.library.NetworkAttachmentType.nat_network
-        adapter.nat_network = iface[ 'network' ]
-
-      elif iface[ 'type' ] == 'internal':
-        adapter.attachment_type = virtualbox.library.NetworkAttachmentType.internal
-        adapter.internal_network = iface[ 'network' ]
-
-      else:
-        raise Exception( 'Unknown interface type "{0}"'.format( iface[ 'type' ] ) )
-
-      interface_list.append( { 'name': iface[ 'name' ], 'mac': iface[ 'mac' ] } )
-
-    else:
+    for i in range( 0, 4 ):
+      adapter = vm2.get_network_adapter( i )
       adapter.enabled = False
 
-  for i in range( 0, vbox.system_properties.max_boot_position  ):
-    if i < len( vm_paramaters[ 'boot_order' ] ):
-      try:
-        vm2.set_boot_order( i + 1, BOOT_ORDER_MAP[ vm_paramaters[ 'boot_order' ][ i ] ] )
-      except KeyError:
-        raise Exception( 'Unknown boot item "{0}"'.format( vm_paramaters[ 'boot_order' ][ i ] ) )
+    disk_port = 0
+    cd_port = 0
+    for disk in vm_paramaters[ 'disk_list' ]:
+      disk_name = disk[ 'name' ]
+      logging.debug( 'vritualbox: creating disk "{0}" on "{1}"'.format( disk_name, vm_name ) )
+      if 'file' in disk:
+        disk_file = disk[ 'file' ]
 
-  vm2.save_settings()
-  session.unlock_machine()
+        if disk_file.endswith( '.iso' ):
+          medium = vbox.open_medium( disk_file, constants.DeviceType.DVD, constants.AccessMode.ReadOnly, True )
+          vm2.attach_device( cd_controller_name, cd_port, 0, constants.DeviceType.DVD, medium )
+          cd_port += 1
+
+        else:
+          medium = vbox.open_medium( disk_file, constants.DeviceType.HardDisk, constants.AccessMode.ReadWrite, True )
+          vm2.attach_device( disk_controller_name, disk_port, 0, constants.DeviceType.HardDisk, medium )
+          disk_port += 1
+
+      else:
+        disk_size = disk.get( 'size', 10 ) * 1024 * 1024 * 1024  # disk_size is in bytes, we were pass in G
+        disk_format = 'vdi'
+        location = '{0}/{1}.vdi'.format( os.path.dirname( vm.settings_file_path ), disk_name )
+        medium = vbox.create_medium( disk_format, location, constants.AccessMode.ReadWrite, constants.DeviceType.HardDisk )
+        progress = medium.create_base_storage( disk_size, [ constants.MediumVariant.Standard ] )
+        while not progress.completed:
+          logging.debug( 'virtualbox: creating storage for "{0}" disk "{1}" at {2}%, {3} seconds left'.format( vm_name, disk_name, progress.percent, progress.time_remaining ) )
+          time.sleep( 1 )
+
+        if medium.state != constants.MediumState.Created:
+          raise Exception( 'disk "{0}" for vm "{1}" faild to create: "{2}"'.format( disk_name, vm_name, progress.error_info[ 'text' ] ) )
+
+        vm2.attach_device( disk_controller_name, disk_port, 0, constants.DeviceType.HardDisk, medium )
+        disk_port += 1
+
+    interface_list = []
+    for i in range( 0, 4 ):
+      adapter = vm2.get_network_adapter( i )
+      if i < len( vm_paramaters[ 'interface_list' ] ):
+        iface = vm_paramaters[ 'interface_list' ][ i ]
+        adapter.enabled = True
+        adapter.mac_address = iface[ 'mac' ].replace( ':', '' )
+
+        if iface[ 'type' ] == 'host':
+          adapter.attachment_type = constants.NetworkAttachmentType.HostOnly
+          adapter.host_only_interface = iface[ 'network' ]
+
+        elif iface[ 'type' ] == 'bridge':
+          adapter.attachment_type = constants.NetworkAttachmentType.Bridged
+          adapter.bridged_interface = iface[ 'network' ]
+
+        elif iface[ 'type' ] == 'nat':
+          adapter.attachment_type = constants.NetworkAttachmentType.NATNetwork
+          adapter.nat_network = iface[ 'network' ]
+
+        elif iface[ 'type' ] == 'internal':
+          adapter.attachment_type = constants.NetworkAttachmentType.Internal
+          adapter.internal_network = iface[ 'network' ]
+
+        else:
+          raise Exception( 'Unknown interface type "{0}"'.format( iface[ 'type' ] ) )
+
+        interface_list.append( { 'name': iface[ 'name' ], 'mac': iface[ 'mac' ] } )
+
+      else:
+        adapter.enabled = False
+
+    for i in range( 0, vbox.system_properties[ 'max_boot_position' ] ):
+      if i < len( vm_paramaters[ 'boot_order' ] ):
+        try:
+          vm2.set_boot_order( i + 1, BOOT_ORDER_MAP[ vm_paramaters[ 'boot_order' ][ i ] ] )
+        except KeyError:
+          raise Exception( 'Unknown boot item "{0}"'.format( vm_paramaters[ 'boot_order' ][ i ] ) )
+
+    vm2.save_settings()
+
+  finally:
+    vbox.session.unlock_machine()
+
   logging.info( 'virtualbox: vm "{0}" created'.format( vm_name ) )
 
   return { 'done': True, 'uuid': vm.hardware_uuid }
@@ -147,18 +150,18 @@ def create_rollback( paramaters ):
 
   try:
     vm = vbox.find_machine( vm_name )
-  except virtualbox.library.VBoxErrorObjectNotFound:
+  except VirtualBoxNotFound:
     vm = None
 
   if vm is not None:
-    media = vm.unregister( virtualbox.library.CleanupMode.detach_all_return_hard_disks_only )
+    media = vm.unregister( constants.CleanupMode.DetachAllReturnHardDisksOnly )
     progress = vm.delete_config( media )
     while not progress.completed:
       logging.debug( 'virtualbox: deleting config "{0}" power off at {1}%, {2} seconds left'.format( vm_name, progress.percent, progress.time_remaining ) )
       time.sleep( 1 )
 
   # make a list of files that needs to be cleaned up, just incase they are created an not attached, or vm wasn't registerd
-  file_list = [ vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties.default_machine_folder ) ]
+  file_list = [ vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties[ 'default_machine_folder' ] ) ]
 
   for disk in vm_paramaters[ 'disk_list' ]:
     disk_name = disk[ 'name' ]
@@ -190,10 +193,10 @@ def destroy( paramaters ):
 
   try:
     vm = vbox.find_machine( vm_uuid )
-  except virtualbox.library.VBoxErrorObjectNotFound:
+  except VirtualBoxNotFound:
     return { 'done': True }  # it's gone, we are donne
 
-  media = vm.unregister( virtualbox.library.CleanupMode.detach_all_return_hard_disks_only )
+  media = vm.unregister( constants.CleanupMode.DetachAllReturnHardDisksOnly )
   progress = vm.delete_config( media )
   while not progress.completed:
     logging.debug( 'virtualbox: deleting config "{0}"({1}) at {2}%, {3} seconds left'.format( vm_name, vm_uuid, progress.percent, progress.time_remaining ) )
@@ -224,10 +227,10 @@ def get_interface_map( paramaters ):
 
 
 def _power_state_convert( state ):
-  if state in ( virtualbox.library.MachineState.powered_off, virtualbox.library.MachineState.saved ):
+  if state in ( constants.MachineState.PoweredOff, constants.MachineState.Saved ):
     return 'off'
 
-  elif state in ( virtualbox.library.MachineState.running, virtualbox.library.MachineState.starting, virtualbox.library.MachineState.stopping ):
+  elif state in ( constants.MachineState.Running, constants.MachineState.Starting, constants.MachineState.Stopping ):
     return 'on'
 
   else:
@@ -248,17 +251,16 @@ def set_power( paramaters ):
   if curent_state == desired_state or ( curent_state == 'off' and desired_state == 'soft_off' ):
     return { 'state': curent_state }
 
-  session = None
-  if desired_state in ( 'off', 'soft_off' ):
-    session = vm.create_session()
-
   progress = None
   if desired_state == 'on':
-    progress = vm.launch_vm_process()
+    progress = vm.launch_vm_process( vbox.session )
+
   elif desired_state == 'off':
-    session.console.power_down()
+    progress = vm.power_down( vbox.session )
+
   elif desired_state == 'soft_off':
-    progress = session.console.power_button()
+    vm.power_button( vbox.session )
+
   else:
     raise Exception( 'Unknown desired state "{0}"'.format( desired_state ) )
 
