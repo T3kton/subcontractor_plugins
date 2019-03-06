@@ -57,6 +57,16 @@ class NetworkAttachmentType:
   NATNetwork = 'NATNetwork'  # 6
 
 
+class NetworkAdapterType:
+  Null = 'Null'  # 0
+  Am79C970A = 'Am79C970A'  # 1
+  Am79C973 = 'Am79C973'  # 2
+  I82540EM = 'I82540EM'  # 3
+  I82543GC = 'I82543GC'  # 4
+  I82545EM = 'I82545EM'  # 5
+  Virtio = 'Virtio'  # 6
+
+
 class MediumState:
   NotCreated = 'NotCreated'  # 0
   Created = 'Created'  # 1

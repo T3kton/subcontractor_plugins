@@ -190,6 +190,7 @@ class Machine:
 class NetworkAdapter:
   enabled = soap_property( 'INetworkAdapter', 'Enabled' )
   mac_address = soap_property( 'INetworkAdapter', 'MACAddress' )
+  adapter_type = soap_property( 'INetworkAdapter', 'AdapterType' )
   attachment_type = soap_property( 'INetworkAdapter', 'AttachmentType' )
   host_only_interface = soap_property( 'INetworkAdapter', 'HostOnlyInterface' )
   bridged_interface = soap_property( 'INetworkAdapter', 'BridgedInterface' )

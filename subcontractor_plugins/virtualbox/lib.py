@@ -92,37 +92,37 @@ def create( paramaters ):
         vm2.attach_device( disk_controller_name, disk_port, 0, constants.DeviceType.HardDisk, medium )
         disk_port += 1
 
-    interface_list = []
-    for i in range( 0, 4 ):
-      adapter = vm2.get_network_adapter( i )
-      if i < len( vm_paramaters[ 'interface_list' ] ):
-        iface = vm_paramaters[ 'interface_list' ][ i ]
-        adapter.enabled = True
-        adapter.mac_address = iface[ 'mac' ].replace( ':', '' )
+    for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
+      interface = vm_paramaters[ 'interface_list' ][ i ]
+      adapter = vm2.get_network_adapter( interface[ 'index' ] )
 
-        if iface[ 'type' ] == 'host':
-          adapter.attachment_type = constants.NetworkAttachmentType.HostOnly
-          adapter.host_only_interface = iface[ 'network' ]
+      try:
+        adapterType = constants.NetworkAdapterType.__dict__[ interface.get( 'adapter_type', 'I82540EM' ) ]
+      except KeyError:
+        raise ValueError( 'Unknown adapter type "{0}"'.format( interface[ 'adapter_type' ] ) )
 
-        elif iface[ 'type' ] == 'bridge':
-          adapter.attachment_type = constants.NetworkAttachmentType.Bridged
-          adapter.bridged_interface = iface[ 'network' ]
+      adapter.enabled = True
+      adapter.adapter_type = adapterType
+      adapter.mac_address = interface[ 'mac' ].replace( ':', '' )
 
-        elif iface[ 'type' ] == 'nat':
-          adapter.attachment_type = constants.NetworkAttachmentType.NATNetwork
-          adapter.nat_network = iface[ 'network' ]
+      if interface[ 'type' ] == 'host':
+        adapter.attachment_type = constants.NetworkAttachmentType.HostOnly
+        adapter.host_only_interface = interface[ 'network' ]
 
-        elif iface[ 'type' ] == 'internal':
-          adapter.attachment_type = constants.NetworkAttachmentType.Internal
-          adapter.internal_network = iface[ 'network' ]
+      elif interface[ 'type' ] == 'bridge':
+        adapter.attachment_type = constants.NetworkAttachmentType.Bridged
+        adapter.bridged_interface = interface[ 'network' ]
 
-        else:
-          raise Exception( 'Unknown interface type "{0}"'.format( iface[ 'type' ] ) )
+      elif interface[ 'type' ] == 'nat':
+        adapter.attachment_type = constants.NetworkAttachmentType.NATNetwork
+        adapter.nat_network = interface[ 'network' ]
 
-        interface_list.append( { 'name': iface[ 'name' ], 'mac': iface[ 'mac' ] } )
+      elif interface[ 'type' ] == 'internal':
+        adapter.attachment_type = constants.NetworkAttachmentType.Internal
+        adapter.internal_network = interface[ 'network' ]
 
       else:
-        adapter.enabled = False
+        raise Exception( 'Unknown interface type "{0}"'.format( interface[ 'type' ] ) )
 
     for i in range( 0, vbox.system_properties[ 'max_boot_position' ] ):
       if i < len( vm_paramaters[ 'boot_order' ] ):
@@ -218,7 +218,7 @@ def get_interface_map( paramaters ):
 
   for i in range( 0, 4 ):
     adapter = vm.get_network_adapter( i )
-    if not adapter.mac_address:
+    if not adapter.enabled:  # stop after the first disabled one
       break
 
     interface_list.append( adapter.mac_address )
@@ -256,10 +256,18 @@ def set_power( paramaters ):
     progress = vm.launch_vm_process( vbox.session )
 
   elif desired_state == 'off':
-    progress = vm.power_down( vbox.session )
+    vm.lock( vbox.session, constants.LockType.Shared )
+    try:
+      vbox.session.machine.power_down( vbox.session )
+    finally:
+      vbox.session.unlock_machine()
 
   elif desired_state == 'soft_off':
-    vm.power_button( vbox.session )
+    vm.lock( vbox.session, constants.LockType.Shared )
+    try:
+      vbox.session.machine.power_button( vbox.session )
+    finally:
+      vbox.session.unlock_machine()
 
   else:
     raise Exception( 'Unknown desired state "{0}"'.format( desired_state ) )
@@ -268,8 +276,6 @@ def set_power( paramaters ):
     while not progress.completed:
       logging.debug( 'virtualbox: vm "{0}"({1}) power "{2}" at {3}%, {4} seconds left'.format( vm_name, vm_uuid, desired_state, progress.percent, progress.time_remaining ) )
       time.sleep( 1 )
-
-  # if failed???
 
   logging.info( 'virtualbox: setting power state of "{0}"({1}) to "{2}" complete'.format( vm_name, vm_uuid, desired_state ) )
   return { 'state': _power_state_convert( vm.state ) }
