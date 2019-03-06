@@ -1,10 +1,13 @@
 import logging
 import time
+from requests import exceptions
 
 from subcontractor_plugins.amt.amt.client import Client
 from subcontractor_plugins.amt.amt.wsman import POWER_STATES
 
 POWER_STATE_LOOKUP = dict( zip( [ str( i ) for i in POWER_STATES.values() ], POWER_STATES.keys() ) )
+
+MAX_RETRIES = 5
 
 
 class AWTClient():
@@ -19,8 +22,23 @@ class AWTClient():
   def disconnect( self ):
     pass
 
+  def docmd( self, func ):  # some AMT baords take a bit to wake up
+    counter = 0
+    while counter < MAX_RETRIES:
+      try:
+        return func()
+      except exceptions.ConnectionError:
+        pass
+
+      logging.debug( 'AMT: Connecting Refused, try {0} of {1}'.format( counter, MAX_RETRIES ) )
+      time.sleep( 1 )
+      counter += 1
+
+    raise ConnectionRefusedError()
+
   def getPower( self ):
-    result = self._conn.power_status()
+    result = self.docmd( self._conn.power_status )
+
     try:
       return POWER_STATE_LOOKUP[ result ]
     except KeyError:
@@ -28,11 +46,11 @@ class AWTClient():
 
   def setPower( self, state ):  # on, off, soft_off
     if state == 'on':
-      self._conn.power_on()
+      self.docmd( self._conn.power_on )
     elif state == 'off':
-      self._conn.power_off()
+      self.docmd( self._conn.power_off )
     elif state == 'soft_off':
-      self._conn.power_off()
+      self.docmd( self._conn.power_off )
     else:
       raise ValueError( 'Unknown power stateu "{0}"'.format( state ) )
 
