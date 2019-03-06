@@ -619,25 +619,3 @@ def power_state( paramaters ):
 
   finally:
     _disconnect( si )
-
-"""
-from pyVim.connect import Connect
-
-for unverified ssl:
-
-import ssl
-_create_unverified_https_context = ssl._create_unverified_context
-ssl._create_default_https_context = _create_unverified_https_context
-
-Other wise there is  a paramater to Connect for verified SSL
-
-
-In [18]: c = Connect( host='192.168.200.101', user='root', pwd='0skin3rd')
-
-In [22]: cont = c.RetrieveContent()
-
-# should use the UUID instead
-In [24]: cont.searchIndex.FindByInventoryPath( '/ha-datacenter/vm/mcp-preallocate--5421431c93-2.test' )
-Out[24]: 'vim.VirtualMachine:32'
-
-"""
