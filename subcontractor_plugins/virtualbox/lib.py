@@ -6,8 +6,6 @@ import random
 from subcontractor_plugins.virtualbox import constants
 from subcontractor_plugins.virtualbox.client import VirtualBox, VirtualBoxNotFound
 
-CLEAN_POWER_DOWN_COUNT = 20
-
 CREATE_GROUP = ''
 CREATE_GROUPS = []
 CREATE_FLAGS = ''

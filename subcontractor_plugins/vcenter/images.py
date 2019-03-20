@@ -65,7 +65,7 @@ class Lease:
         raise Exception( 'Timeout waiting for least to be ready' )
 
       logging.info( 'Waiting for lease to be ready...' )
-      time.sleep( 2 )
+      time.sleep( 4 )
 
     if self.lease.state == vim.HttpNfcLease.State.error:
       raise Exception( 'Lease error: "{0}"'.format( self.lease.error ) )
@@ -87,6 +87,10 @@ class Lease:
     self.lease.Abort( msg )
 
   @property
+  def state( self ):
+    return self.lease.state
+
+  @property
   def info( self ):
     return self.lease.info
 
@@ -104,6 +108,7 @@ class Lease:
     try:
       prog = self.handler.progress
       self.lease.Progress( prog )
+      logging.debug( 'Lease: import progress at "{0}"%'.format( prog ) )
       if self.lease.state == vim.HttpNfcLease.State.ready:
         Timer( PROGRESS_INTERVAL, self._timer_cb ).start()
 
@@ -148,6 +153,7 @@ class OVAHandler:
     """
     lease = Lease( resource_pool.ImportVApp( spec=import_spec_result.importSpec, folder=datacenter.vmFolder ), self.handle )
     lease.start_wait()
+    uuid = lease.info.entity.config.instanceUuid
 
     try:
       lease.start()
@@ -166,7 +172,7 @@ class OVAHandler:
     finally:
       lease.stop()
 
-    return lease.info.entity.config.instanceUuid
+    return uuid
 
   def upload_disk( self, fileItem, lease, host ):
     """
@@ -307,7 +313,7 @@ class WebHandle( FileHandle ):
     while buff:
       if datetime.utcnow() > cp:
         cp = datetime.utcnow() + timedelta( seconds=PROGRESS_INTERVAL )
-        logging.debug( 'WebHandle: at {0} of {1}'.format( self.cache_file.tell(), size ) )
+        logging.debug( 'WebHandle: download at {0} of {1}'.format( self.cache_file.tell(), size ) )
 
       self.cache_file.write( buff )
       buff = resp.read( 4096 * 1024 )
