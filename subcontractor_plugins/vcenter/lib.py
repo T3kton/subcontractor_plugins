@@ -8,13 +8,6 @@ from pyVmomi import vim
 
 from subcontractor_plugins.vcenter.images import OVAHandler
 
-CLEAN_POWER_DOWN_COUNT = 20
-
-CREATE_GROUP = ''
-CREATE_GROUPS = []
-CREATE_FLAGS = ''
-CREATE_OS_TYPE_ID = 'Ubuntu_64'
-
 BOOT_ORDER_MAP = {
                     'hdd': vim.vm.BootOptions.BootableDiskDevice( deviceKey=2000 ),  # TODO: figure out which is the boot drive and put it here
                     'net': vim.vm.BootOptions.BootableEthernetDevice( deviceKey=4000 ),  # TODO: figure out which is the provisinioning interface and set it here
@@ -202,9 +195,6 @@ def create_datastore( paramaters ):
 
 
 def datastore_list( paramaters ):
-  # returns a list of hosts in a resource
-  # host must have paramater[ 'min_memory' ] aviable in MB
-  # orderd by paramater[ 'cpu_scaler' ] * % cpu remaning + paramater[ 'memory_scaler' ] * % mem remaning
   connection_paramaters = paramaters[ 'connection' ]
   logging.info( 'vcenter: getting Datastore List for dc: "{0}" rp: "{1}" host: "{2}"'.format( paramaters[ 'datacenter' ], paramaters[ 'cluster' ], paramaters[ 'host' ] ) )
   paramaters[ 'min_free_space' ] = paramaters[ 'min_free_space' ]
@@ -230,6 +220,34 @@ def datastore_list( paramaters ):
       result.append( datastore.name )
 
     return { 'datastore_list': result }
+
+  finally:
+    _disconnect( si )
+
+
+def network_list( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
+  logging.info( 'vcenter: getting Network List for dc: "{0}" rp: "{1}" host: "{2}"'.format( paramaters[ 'datacenter' ], paramaters[ 'cluster' ], paramaters[ 'host' ] ) )
+
+  try:
+    paramaters[ 'name_regex' ] = re.compile( paramaters[ 'name_regex' ] )
+  except TypeError:
+    pass
+
+  si = _connect( connection_paramaters )
+  try:
+    dataCenter = _getDatacenter( si, paramaters[ 'datacenter' ] )
+    resourcePool = _getResourcePool( dataCenter, paramaters[ 'cluster' ] )
+    host = _getHost( resourcePool, paramaters[ 'host' ] )
+
+    result = []
+    for network in host.network:
+      if paramaters[ 'name_regex' ] is not None and not paramaters[ 'name_regex' ].match( network.name ):
+        continue
+
+      result.append( network.name )
+
+    return { 'network_list': result }
 
   finally:
     _disconnect( si )
@@ -280,8 +298,6 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
   for interface in vm_paramaters[ 'interface_list' ]:
     network_mapping.append( vim.OvfManager.NetworkMapping( name=interface[ 'physical_location' ], network=_getNetwork( host, interface[ 'network' ] ) ) )
 
-  # TODO: if deploying to ESXi directly, need --X:injectOvfEnv
-
   property_map = []
   try:
     for key, value in vm_paramaters[ 'property_map' ].items():
@@ -322,7 +338,68 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
   if len( result.error ):
     raise Exception( 'OVA Import Errors: "{0}"'.format( '","'.join( [ str( i ) for i in result.error ] ) ) )
 
-  return handler.upload( connection_host, resource_pool, result, data_center )
+  uuid = handler.upload( connection_host, resource_pool, result, data_center )
+
+  if si.content.about.productLineId == 'embeddedEsx':
+    _inject_ovf_env( si, _getVM( si, uuid ), vm_paramaters )
+
+  return uuid
+
+
+def _inject_ovf_env( si, vm, vm_paramaters ):
+  logging.info( 'vcenter: injecting ovf enviornment' )
+  try:
+    property_map = vm_paramaters[ 'property_map' ]
+  except KeyError:
+    return
+
+  values = {}
+  values[ 'moid' ] = 'vm-{0}'.format( vm._moid )
+  values[ 'kind' ] = si.content.about.name
+  values[ 'version' ] = si.content.about.version
+  values[ 'vendor' ] = si.content.about.vendor
+
+  property_list = []
+  for key, value in property_map.items():
+    property_list.append( '         <Property oe:key="{0}" oe:value="{1}"/>'.format( key, value ) )
+
+  values[ 'properties' ] = '\n'.join( property_list )
+
+  spec = """<?xml version="1.0" encoding="UTF-8"?>
+<Environment
+     xmlns="http://schemas.dmtf.org/ovf/environment/1"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xmlns:oe="http://schemas.dmtf.org/ovf/environment/1"
+     xmlns:ve="http://www.vmware.com/schema/ovfenv"
+     oe:id=""
+     ve:esxId="vm-{moid}">
+   <PlatformSection>
+      <Kind>{kind}/Kind>
+      <Version>{version}</Version>
+      <Vendor>{vendor}</Vendor>
+      <Locale>en</Locale>
+   </PlatformSection>
+   <PropertySection>
+{ properties }
+   </PropertySection>
+</Environment>
+""".format( values )
+
+  opt = vim.option.OptionValue()
+  opt.key = 'guestinfo.ovfEnv'
+  opt.value = spec
+
+  configSpec = vim.vm.ConfigSpec()
+  configSpec.extraConfig = [ opt ]
+
+  task = vm.ReconfigVM_Task( configSpec )
+  _taskWait( task )
+
+  if task.info.state == 'error':
+    raise Exception( 'Error With OVF Environment Injection: "{0}"'.format( task.info.error ) )
+
+  if task.info.state != 'success':
+    raise Exception( 'Unexpected Task State With OVF Environment Injection: "{0}"'.format( task.info.state ) )
 
 
 def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters ):

@@ -1,3 +1,9 @@
+subcontractor-plugins (0.3-1) xenial; urgency=medium
+
+  * goes with contractor-plugins 0.3
+
+ -- Peter Howe <pnhowe@gmail.com>  Wed, 06 Mar 2019 22:08:50 -0700
+
 subcontractor-plugins (0.2-1) xenial; urgency=medium
 
   * vmware work
