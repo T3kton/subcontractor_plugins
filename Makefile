@@ -44,4 +44,4 @@ dpkg:
 dpkg-file:
 	echo $(shell ls ../subcontractor-plugins_*.deb):xenial
 
-.PHONY: test dpkg-distros dpkg-requires dpkg dpkg-file
+.PHONY:: dpkg-requires dpkg dpkg-file

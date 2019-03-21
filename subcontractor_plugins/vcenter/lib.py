@@ -354,7 +354,7 @@ def _inject_ovf_env( si, vm, vm_paramaters ):
     return
 
   values = {}
-  values[ 'moid' ] = 'vm-{0}'.format( vm._moid )
+  values[ 'moid' ] = 'vm-{0}'.format( vm._moId )
   values[ 'kind' ] = si.content.about.name
   values[ 'version' ] = si.content.about.version
   values[ 'vendor' ] = si.content.about.vendor
@@ -380,10 +380,10 @@ def _inject_ovf_env( si, vm, vm_paramaters ):
       <Locale>en</Locale>
    </PlatformSection>
    <PropertySection>
-{ properties }
+{properties}
    </PropertySection>
 </Environment>
-""".format( values )
+""".format( **values )
 
   opt = vim.option.OptionValue()
   opt.key = 'guestinfo.ovfEnv'
