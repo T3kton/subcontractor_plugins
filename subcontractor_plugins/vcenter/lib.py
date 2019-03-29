@@ -2,6 +2,7 @@ import logging
 import time
 import re
 import random
+from datetime import datetime, timedelta
 
 from pyVim import connect
 from pyVmomi import vim
@@ -813,6 +814,47 @@ def power_state( paramaters ):
     vm = _getVM( si, vm_uuid )
 
     return { 'state': _power_state_convert( vm.runtime.powerState ) }
+
+  finally:
+    _disconnect( si )
+
+
+def execute( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
+  vm_uuid = paramaters[ 'uuid' ]
+  vm_name = paramaters[ 'name' ]
+  program = paramaters[ 'program' ]
+  args = paramaters[ 'args' ]
+  dir = paramaters[ 'dir' ]
+
+  logging.info( 'vcenter: executing "{0}" on "{1}"({2})'.format( program, vm_name, vm_uuid ) )
+  si = _connect( connection_paramaters )
+  pManager = si.content.guestOperationsManager.processManager
+  try:
+    vm = _getVM( si, vm_uuid )
+
+    passwordAuth = vim.vm.guest.NamePasswordAuthentication( username=paramaters[ 'username' ], password=paramaters[ 'password' ] )
+
+    programSpec = vim.vm.guest.ProcessManager.ProgramSpec()
+    programSpec.programPath = program
+    programSpec.arguments = args
+    programSpec.workingDirectory = dir
+
+    pid = pManager.StartProgramInGuest( vm=vm, auth=passwordAuth, spec=programSpec )
+
+    logging.debug( 'vcenter: executing "{0}" on "{1}"({2}) is pid "{3}"'.format( program, vm_name, vm_uuid, pid ) )
+
+    finish_by = timedelta( seconds=paramaters[ 'timeout' ] ) + datetime.utcnow()
+    pList = pManager.ListProcessesInGuest( vm=vm, auth=passwordAuth, pids=[ pid ] )
+    while pList[0].exitCode is None:
+      logging.debug( 'vcenter: executing "{0}" on "{1}"({2}) waiting for "{3}"...'.format( program, vm_name, vm_uuid, pid ) )
+      time.sleep( 5 )
+      pList = pManager.ListProcessesInGuest( vm=vm, auth=passwordAuth, pids=[ pid ] )
+
+      if datetime.utcnow() > finish_by:
+        raise Exception( 'timeout waiting for command to finish' )
+
+    return { 'rc': pList[0].exitCode }
 
   finally:
     _disconnect( si )
