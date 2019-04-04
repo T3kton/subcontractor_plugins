@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from urllib import request
 from tempfile import NamedTemporaryFile
 
-from subcontractor_plugins.Packrat import PackratHandler
+from subcontractor_plugins.common.Packrat import PackratHandler, PackratsHandler
 
 PROGRESS_INTERVAL = 10  # in seconds
 WEB_HANDLE_TIMEOUT = 60  # in seconds
@@ -24,13 +24,15 @@ def file_retrieve( url, target_file, proxy ):
   else:
     opener.add_handler( request.ProxyHandler( {} ) )
 
+  opener.add_handler( PackratHandler() )
   opener.add_handler( request.HTTPHandler() )
+
   if hasattr( http.client, 'HTTPSConnection' ):
+    opener.add_handler( PackratsHandler() )
     opener.add_handler( request.HTTPSHandler() )
 
-  opener.add_handler( PackratHandler )
-  opener.add_handler( request.FileHandler )
-  opener.add_handler( request.FTPHandler )
+  opener.add_handler( request.FileHandler() )
+  opener.add_handler( request.FTPHandler() )
   opener.add_handler( request.UnknownHandler() )
 
   try:
@@ -50,11 +52,12 @@ def file_retrieve( url, target_file, proxy ):
   except socket.error as e:
     raise FileRetrieveException( 'Socket Error "{0}"'.format( e ) )
 
-  if resp.code == 404:
-    raise FileRetrieveException( 'File "{0}" not Found'.format( url ) )
+  if resp.code is not None:  # FileHandler, FTPHandler do not have a response code
+    if resp.code == 404:
+      raise FileRetrieveException( 'File "{0}" not Found'.format( url ) )
 
-  if resp.code != 200:
-    raise FileRetrieveException( 'Invalid Response code "{0}"'.format( resp.code ) )
+    if resp.code != 200:
+      raise FileRetrieveException( 'Invalid Response code "{0}"'.format( resp.code ) )
 
   if isinstance( target_file, str ):
     fp = open( target_file, 'wb' )
@@ -80,7 +83,7 @@ def file_retrieve( url, target_file, proxy ):
 
 
 def file_reader( url, proxy ):
-  local_file = NamedTemporaryFile( mode='wb', prefix='subcontractor_' )
+  local_file = NamedTemporaryFile( mode='w+b', prefix='subcontractor_' )
 
   file_retrieve( url, local_file, proxy )
 

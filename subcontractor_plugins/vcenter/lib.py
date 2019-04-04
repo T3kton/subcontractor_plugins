@@ -38,7 +38,7 @@ def _connect( paramaters ):
 
   logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( paramaters[ 'host' ], paramaters[ 'username' ] ) )
 
-  return connect.Connect( host=paramaters[ 'host' ], user=paramaters[ 'username' ], pwd=paramaters[ 'password' ] )
+  return connect.SmartConnect( host=paramaters[ 'host' ], user=paramaters[ 'username' ], pwd=paramaters[ 'password' ] )
 
 
 def _disconnect( si ):
@@ -644,7 +644,7 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
 
     if 'ova' in vm_paramaters:
       vm_uuid = _create_from_ova( si, vm_name, paramaters[ 'connection' ][ 'host' ], data_center, resource_pool, folder, host, datastore, vm_paramaters )
-    if 'template' in vm_paramaters:
+    elif 'template' in vm_paramaters:
       vm_uuid = _create_from_template( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters )
     else:
       vm_uuid = _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters )
@@ -796,6 +796,9 @@ def set_power( paramaters ):
       if task.info.state == vim.TaskInfo.State.error:
         raise Exception( 'vcenter: Unable to set power state of "{0}"({1}) to "{2}"'.format( vm_name, vm_uuid, desired_state ) )
 
+    else:
+      time.sleep( 5 )  # give the vm the chance to do something
+
     logging.info( 'vcenter: setting power state of "{0}"({1}) to "{2}" complete'.format( vm_name, vm_uuid, desired_state ) )
     return { 'state': _power_state_convert( vm.runtime.powerState ) }
 
@@ -827,11 +830,15 @@ def execute( paramaters ):
   args = paramaters[ 'args' ]
   dir = paramaters[ 'dir' ]
 
-  logging.info( 'vcenter: executing "{0}" on "{1}"({2})'.format( program, vm_name, vm_uuid ) )
+  logging.info( 'vcenter: executing "{0}" "{1}" on "{2}"({3})'.format( program, args, vm_name, vm_uuid ) )
   si = _connect( connection_paramaters )
-  pManager = si.content.guestOperationsManager.processManager
   try:
     vm = _getVM( si, vm_uuid )
+
+    if vm.guest.toolsStatus in ( 'toolsNotInstalled', 'toolsNotRunning' ):
+      raise Exception( 'VMwareTools is not installed or not Running')
+
+    pManager = si.content.guestOperationsManager.processManager
 
     passwordAuth = vim.vm.guest.NamePasswordAuthentication( username=paramaters[ 'username' ], password=paramaters[ 'password' ] )
 
@@ -842,12 +849,12 @@ def execute( paramaters ):
 
     pid = pManager.StartProgramInGuest( vm=vm, auth=passwordAuth, spec=programSpec )
 
-    logging.debug( 'vcenter: executing "{0}" on "{1}"({2}) is pid "{3}"'.format( program, vm_name, vm_uuid, pid ) )
+    logging.debug( 'vcenter: executing "{0}" "{1}" on "{2}"({3}) is pid "{4}"'.format( program, args, vm_name, vm_uuid, pid ) )
 
     finish_by = timedelta( seconds=paramaters[ 'timeout' ] ) + datetime.utcnow()
     pList = pManager.ListProcessesInGuest( vm=vm, auth=passwordAuth, pids=[ pid ] )
     while pList[0].exitCode is None:
-      logging.debug( 'vcenter: executing "{0}" on "{1}"({2}) waiting for "{3}"...'.format( program, vm_name, vm_uuid, pid ) )
+      logging.debug( 'vcenter: executing "{0}" "{1}" on "{2}"({3}) waiting for "{4}"...'.format( program, args, vm_name, vm_uuid, pid ) )
       time.sleep( 5 )
       pList = pManager.ListProcessesInGuest( vm=vm, auth=passwordAuth, pids=[ pid ] )
 

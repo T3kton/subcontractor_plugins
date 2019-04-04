@@ -3,7 +3,6 @@ import json
 from urllib import request, parse
 
 
-# TODO: packratS handler
 # TODO: study the way the proxy handler works and make this act more like that, we are carying way to much old baggage here
 # schema:   packrat(s)://host/repo/type/package[?version]  if version is omitted, then the latest version
 class PackratHandler( request.BaseHandler ):
@@ -14,6 +13,9 @@ class PackratHandler( request.BaseHandler ):
     self.gpg_key_file = gpg_key_file
 
   def packrat_open( self, req ):
+    return self._open( req, False )
+
+  def _open( self, req, ssl ):
     if not req.host:
       raise request.URLError( 'packrat error: no host given' )
 
@@ -38,12 +40,17 @@ class PackratHandler( request.BaseHandler ):
       except KeyError:
         raise Exception( 'Version "{0}" for Package "{1}" of type "{2}" not found in repo "{3}"'.format( version, package, file_type, repo ) )
 
-    url = 'http://{0}/{1}/{2}'.format( req.host, repo, entry[ 'path' ] )
+    if ssl:
+      url = 'https://{0}/{1}/{2}'.format( req.host, repo, entry[ 'path' ] )
+    else:
+      url = 'http://{0}/{1}/{2}'.format( req.host, repo, entry[ 'path' ] )
+
+    handler_name_list = [ i.__class__.__name__ for i in self.parent.handlers ]
 
     self.opener = request.OpenerDirector()
-    self.opener.add_handler( request.ProxyHandler( self.parent.handlers[ 'proxyHandler'].proxies ) )
+    self.opener.add_handler( request.ProxyHandler( self.parent.handlers[ handler_name_list.index( 'ProxyHandler' ) ].proxies ) )
     self.opener.add_handler( request.HTTPHandler() )
-    if 'HTTPSHandler' in self.parent.handlers:
+    if 'HTTPSHandler' in handler_name_list:
       self.opener.add_handler( request.HTTPSHandler() )
 
     self.opener.addheaders = [ ( 'User-agent', 'subcontractor_plugin' ) ]
@@ -91,3 +98,8 @@ class PackratHandler( request.BaseHandler ):
         result[ entry[ 'version' ] ] = entry
 
     return result
+
+
+class PackratsHandler( PackratHandler ):
+  def packrats_open( self, req ):
+    return self._open( req, True )
