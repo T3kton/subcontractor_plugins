@@ -9,6 +9,7 @@ from pyVmomi import vim
 
 from subcontractor_plugins.vcenter.images import OVAHandler
 
+POLL_INTERVAL = 4
 BOOT_ORDER_MAP = {
                     'hdd': vim.vm.BootOptions.BootableDiskDevice( deviceKey=2000 ),  # TODO: figure out which is the boot drive and put it here
                     'net': vim.vm.BootOptions.BootableEthernetDevice( deviceKey=4000 ),  # TODO: figure out which is the provisinioning interface and set it here
@@ -29,16 +30,16 @@ class MOBNotFound( Exception ):
   pass
 
 
-def _connect( paramaters ):
+def _connect( connection_paramaters ):
   # work arround invalid SSL
   import ssl
   _create_unverified_https_context = ssl._create_unverified_context
   ssl._create_default_https_context = _create_unverified_https_context
   # TODO: flag for trusting SSL of connection, also there is a paramater to Connect for verified SSL
 
-  logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( paramaters[ 'host' ], paramaters[ 'username' ] ) )
+  logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( connection_paramaters[ 'host' ], connection_paramaters[ 'username' ] ) )
 
-  return connect.SmartConnect( host=paramaters[ 'host' ], user=paramaters[ 'username' ], pwd=paramaters[ 'password' ] )
+  return connect.SmartConnect( host=connection_paramaters[ 'host' ], user=connection_paramaters[ 'username' ], pwd=connection_paramaters[ 'password' ] )
 
 
 def _disconnect( si ):
@@ -60,7 +61,7 @@ def _taskWait( task ):
     else:
       logging.debug( 'vmware: Waiting ...' )
 
-    time.sleep( 2 )
+    time.sleep( POLL_INTERVAL )
 
 
 def _getDatacenter( si, name ):
@@ -791,13 +792,13 @@ def set_power( paramaters ):
     if task is not None:
       while task.info.state not in ( vim.TaskInfo.State.success, vim.TaskInfo.State.error ):
         logging.debug( 'vcenter: vm "{0}"({1}) power "{2}" at {3}%'.format( vm_name, vm_uuid, desired_state, task.info.progress ) )
-        time.sleep( 2 )
+        time.sleep( POLL_INTERVAL )
 
       if task.info.state == vim.TaskInfo.State.error:
         raise Exception( 'vcenter: Unable to set power state of "{0}"({1}) to "{2}"'.format( vm_name, vm_uuid, desired_state ) )
 
     else:
-      time.sleep( 5 )  # give the vm the chance to do something
+      time.sleep( POLL_INTERVAL * 2 )  # give the vm the chance to do something
 
     logging.info( 'vcenter: setting power state of "{0}"({1}) to "{2}" complete'.format( vm_name, vm_uuid, desired_state ) )
     return { 'state': _power_state_convert( vm.runtime.powerState ) }
@@ -855,7 +856,7 @@ def execute( paramaters ):
     pList = pManager.ListProcessesInGuest( vm=vm, auth=passwordAuth, pids=[ pid ] )
     while pList[0].exitCode is None:
       logging.debug( 'vcenter: executing "{0}" "{1}" on "{2}"({3}) waiting for "{4}"...'.format( program, args, vm_name, vm_uuid, pid ) )
-      time.sleep( 5 )
+      time.sleep( POLL_INTERVAL )
       pList = pManager.ListProcessesInGuest( vm=vm, auth=passwordAuth, pids=[ pid ] )
 
       if datetime.utcnow() > finish_by:
