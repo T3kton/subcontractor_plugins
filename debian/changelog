@@ -1,3 +1,10 @@
+subcontractor-plugins (0.4-1) xenial; urgency=medium
+
+  * contractor 0.4
+  * azure support
+
+ -- Peter Howe <pnhowe@gmail.com>  Fri, 26 Apr 2019 11:00:59 -0600
+
 subcontractor-plugins (0.3-1) xenial; urgency=medium
 
   * goes with contractor-plugins 0.3
