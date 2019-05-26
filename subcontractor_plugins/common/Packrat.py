@@ -12,6 +12,21 @@ class PackratHandler( request.BaseHandler ):
     self.check_hash = check_hash
     self.gpg_key_file = gpg_key_file
 
+  def add_parent( self, parent ):  # TODO: Until the proxy stuff is figured out, make sure to add PackratHandler after HTTP(s) and Proxy Handlers
+    super().add_parent( parent )
+
+    handler_name_list = [ i.__class__.__name__ for i in self.parent.handlers ]
+
+    self.opener = request.OpenerDirector()
+    if 'ProxyHandler' in handler_name_list:
+      self.opener.add_handler( request.ProxyHandler( self.parent.handlers[ handler_name_list.index( 'ProxyHandler' ) ].proxies ) )
+
+    self.opener.add_handler( request.HTTPHandler() )
+    if 'HTTPSHandler' in handler_name_list:
+      self.opener.add_handler( request.HTTPSHandler() )
+
+    self.opener.addheaders = [ ( 'User-agent', 'subcontractor_plugin' ) ]
+
   def packrat_open( self, req ):
     return self._open( req, False )
 
@@ -19,14 +34,14 @@ class PackratHandler( request.BaseHandler ):
     if not req.host:
       raise request.URLError( 'packrat error: no host given' )
 
-    package, file_type, version = parse.splitquery( req.selector )
+    package, version = parse.splitquery( req.selector )
     try:
-      repo, package = package.split( '/' )
+      _, repo, file_type, package = package.split( '/' )
     except ValueError:
       raise ValueError( 'Unable to parse repo, type, and package' )
 
     # TODO: somekind of manifest caching?
-    file_map = self._getPackageFiles( req.host, repo, file_type, package, req.timeout )
+    file_map = self._getFileList( req.host, repo, file_type, package, req.timeout )
     if not file_map:
       raise Exception( 'Entries for Package "{0}" of type "{1}" not found in repo "{2}"'.format( package, file_type, repo ) )
 
@@ -45,17 +60,7 @@ class PackratHandler( request.BaseHandler ):
     else:
       url = 'http://{0}/{1}/{2}'.format( req.host, repo, entry[ 'path' ] )
 
-    handler_name_list = [ i.__class__.__name__ for i in self.parent.handlers ]
-
-    self.opener = request.OpenerDirector()
-    self.opener.add_handler( request.ProxyHandler( self.parent.handlers[ handler_name_list.index( 'ProxyHandler' ) ].proxies ) )
-    self.opener.add_handler( request.HTTPHandler() )
-    if 'HTTPSHandler' in handler_name_list:
-      self.opener.add_handler( request.HTTPSHandler() )
-
-    self.opener.addheaders = [ ( 'User-agent', 'subcontractor_plugin' ) ]
-
-    return self.opener.open.open( url, timeout=req.timeout )
+    return self.opener.open( url, timeout=req.timeout )
 
   def _request( self, host, repo, file, timeout ):
     url = 'http://{0}/{1}/{2}'.format( host, repo, file )
@@ -89,9 +94,9 @@ class PackratHandler( request.BaseHandler ):
     result = {}
     manifest = json.loads( self._request( host, repo, '_repo_main/MANIFEST_all.json', timeout ).decode() )  # TODO: remove decode when newer version of python
     try:
-      entry_list = manifest[ 'package' ]
+      entry_list = manifest[ package ]
     except KeyError:
-      return []
+      return {}
 
     for entry in entry_list:
       if entry[ 'type' ] == file_type:

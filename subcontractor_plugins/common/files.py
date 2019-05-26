@@ -24,12 +24,12 @@ def file_retrieve( url, target_file, proxy ):
   else:
     opener.add_handler( request.ProxyHandler( {} ) )
 
-  opener.add_handler( PackratHandler() )
   opener.add_handler( request.HTTPHandler() )
+  opener.add_handler( PackratHandler() )
 
   if hasattr( http.client, 'HTTPSConnection' ):
-    opener.add_handler( PackratsHandler() )
     opener.add_handler( request.HTTPSHandler() )
+    opener.add_handler( PackratsHandler() )
 
   opener.add_handler( request.FileHandler() )
   opener.add_handler( request.FTPHandler() )
