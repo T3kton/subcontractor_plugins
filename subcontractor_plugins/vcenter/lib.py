@@ -129,6 +129,20 @@ def _genPaths( vm_name, disk_list, datastore ):
   return vmx_file_path, disk_filepath_list
 
 
+def _genNetworkBacking( network ):
+  if network.__class__.__name__ == 'vim.dvs.DistributedVirtualPortgroup':
+    result = vim.vm.device.VirtualEthernetCard.DistributedVirtualPortBackingInfo()
+    result.port = vim.dvs.PortConnection()
+    result.port.portgroupKey = network.key
+    result.port.switchUuid = network.config.distributedVirtualSwitch.uuid
+
+  else:
+    result = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo()
+    result.deviceName = network.name
+
+  return result
+
+
 def host_list( paramaters ):
   # returns a list of hosts in a resource
   # host must have paramater[ 'min_memory' ] aviable in MB
@@ -391,7 +405,7 @@ def _create_from_template( si, vm_name, data_center, resource_pool, folder, host
     devSpec.device = network_device_list[ i ]
     devSpec.device.addressType = 'Manual'
     devSpec.device.macAddress = interface[ 'mac' ]
-    devSpec.device.backing.deviceName = network.name
+    devSpec.device.backing = _genNetworkBacking( network )
     configSpec.deviceChange.append( devSpec )
 
     ipSettings = vim.vm.customization.IPSettings()
@@ -571,8 +585,7 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
     devSpec.device.addressType = 'Manual'
     devSpec.device.macAddress = interface[ 'mac' ]
     devSpec.device.unitNumber = i + 7
-    devSpec.device.backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo()
-    devSpec.device.backing.deviceName = network.name
+    devSpec.device.backing = _genNetworkBacking( network )
     configSpec.deviceChange.append( devSpec )
 
   for item in vm_paramaters[ 'boot_order' ]:
