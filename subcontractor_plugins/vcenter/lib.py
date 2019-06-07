@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pyVim import connect
 from pyVmomi import vim
 
+from subcontractor.credentials import getCredential
 from subcontractor_plugins.vcenter.images import OVAHandler
 
 POLL_INTERVAL = 4
@@ -37,9 +38,11 @@ def _connect( connection_paramaters ):
   ssl._create_default_https_context = _create_unverified_https_context
   # TODO: flag for trusting SSL of connection, also there is a paramater to Connect for verified SSL
 
+  password = getCredential( connection_paramaters[ 'password' ] )
+
   logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( connection_paramaters[ 'host' ], connection_paramaters[ 'username' ] ) )
 
-  return connect.SmartConnect( host=connection_paramaters[ 'host' ], user=connection_paramaters[ 'username' ], pwd=connection_paramaters[ 'password' ] )
+  return connect.SmartConnect( host=connection_paramaters[ 'host' ], user=connection_paramaters[ 'username' ], pwd=password )
 
 
 def _disconnect( si ):

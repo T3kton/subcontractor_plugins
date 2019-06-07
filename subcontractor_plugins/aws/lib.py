@@ -3,6 +3,8 @@ import boto3
 import time
 from botocore.exceptions import WaiterError
 
+from subcontractor.credentials import getCredential
+
 
 POLL_INTERVAL = 3
 POWER_SET_TIMEOUT = int( 30 / POLL_INTERVAL )
@@ -11,11 +13,13 @@ POWER_SET_TIMEOUT = int( 30 / POLL_INTERVAL )
 #  TODO: pass credentals in from contractor, for now put them in your env or ~/.aws/credentials
 def _connect():
   logging.debug( 'aws: connecting to EC2' )
+  token = None
+  token = getCredential( token )
   return boto3.resource( service_name='ec2',
                          # region_name='us-west-2',
                          # aws_access_key_id=ACCESS_KEY,
                          # aws_secret_access_key=SECRET_KEY,
-                         # aws_session_token=SESSION_TOKEN,
+                         aws_session_token=token,
                          use_ssl=True,
                          verify=True )
 
