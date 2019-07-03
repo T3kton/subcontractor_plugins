@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pyVim import connect
 from pyVmomi import vim
 
-from subcontractor.credentials import getCredential
+from subcontractor.credentials import getCredentials
 from subcontractor_plugins.vcenter.images import OVAHandler
 
 POLL_INTERVAL = 4
@@ -38,11 +38,19 @@ def _connect( connection_paramaters ):
   ssl._create_default_https_context = _create_unverified_https_context
   # TODO: flag for trusting SSL of connection, also there is a paramater to Connect for verified SSL
 
-  password = getCredential( connection_paramaters[ 'password' ] )
+  creds = connection_paramaters[ 'credentials' ]
+  if isinstance( creds, str ):
+    creds = getCredentials( creds )
 
-  logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( connection_paramaters[ 'host' ], connection_paramaters[ 'username' ] ) )
+  # TODO: saninity check on creds
 
-  return connect.SmartConnect( host=connection_paramaters[ 'host' ], user=connection_paramaters[ 'username' ], pwd=password )
+  if 'username' in creds:
+    logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( connection_paramaters[ 'host' ], creds[ 'username' ] ) )
+    return connect.SmartConnect( host=connection_paramaters[ 'host' ], user=creds[ 'username' ], pwd=creds[ 'password' ], mechanism='userpass' )
+
+  else:
+    logging.debug( 'vcenter: connecting to "{0}" with token "{1}"'.format( connection_paramaters[ 'host' ], creds[ 'token' ] ) )
+    return connect.SmartConnect( host=connection_paramaters[ 'host' ], b64token=creds[ 'token' ], mechanism='sspi' )
 
 
 def _disconnect( si ):

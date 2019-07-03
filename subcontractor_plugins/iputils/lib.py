@@ -7,7 +7,7 @@ from subcontractor_plugins.iputils.pyping import ping as pyping
 def ping( paramaters ):
   target = paramaters[ 'target' ]
   count = paramaters[ 'count' ]
-  logging.info( 'iputils: pinging "{0}" "{1}" times...'.format( target, count ) )
+  logging.debug( 'iputils: pinging "{0}" "{1}" times...'.format( target, count ) )
 
   pinger = pyping( target )
   pinger.run( count=count )
@@ -23,7 +23,7 @@ def port_state( paramaters ):
   except TypeError:
     raise ValueError( 'Port paramater must be an integer' )
 
-  logging.info( 'iputils: checking port "{0}" on "{1}"...'.format( port, target ) )
+  logging.debug( 'iputils: checking port "{0}" on "{1}"...'.format( port, target ) )
 
   sock = socket.socket()
   sock.settimeout( 5 )
