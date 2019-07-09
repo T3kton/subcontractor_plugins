@@ -2,6 +2,7 @@ import logging
 import time
 from requests import exceptions
 
+from subcontractor.credentials import getCredential
 from subcontractor_plugins.amt.amt.client import Client
 from subcontractor_plugins.amt.amt.wsman import POWER_STATES
 
@@ -17,7 +18,8 @@ class AWTClient():
     self.password = password
 
   def connect( self ):
-    self._conn = Client( self.ip_address, self.password )
+    password = getCredential( self.password )
+    self._conn = Client( self.ip_address, password )
 
   def disconnect( self ):
     pass

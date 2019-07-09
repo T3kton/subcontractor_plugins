@@ -1,24 +1,20 @@
-#!/usr/bin/env python
-"""
-Derived from code from https://github.com/vmware/pyvmomi-community-samples/blob/master/samples/deploy_ova.py and deploy_ovf.py
-"""
-import os
 import ssl
 import tarfile
 import logging
 import time
-import socket
-from datetime import datetime, timedelta
+import os
 from threading import Timer
 
 from urllib import request
 from pyVmomi import vim, vmodl
-from tempfile import NamedTemporaryFile
 
-from subcontractor_plugins.common.Packrat import HTTPErrorProcessorPassthrough, packrat_from_url
+from subcontractor_plugins.common.files import file_reader
+
+"""
+Derived from code from https://github.com/vmware/pyvmomi-community-samples/blob/master/samples/deploy_ova.py and deploy_ovf.py
+"""
 
 PROGRESS_INTERVAL = 10  # in seconds
-WEB_HANDLE_TIMEOUT = 60  # in seconds
 
 
 def _get_tarfile_size( tarfile ):
@@ -37,24 +33,11 @@ def _get_tarfile_size( tarfile ):
   return size
 
 
-def _create_file_handle( url ):
-  if url.startswith( ( 'packrat://', 'packrats://' ) ):
-    return PackratHandle( url )
-
-  elif url.startswith( ( 'http://', 'https://' ) ):
-    return WebHandle( url )
-
-  elif url.startswith( 'file://' ):
-    return FileHandle( url[ 7: ] )
-
-  else:
-    raise ValueError( 'Unknown scheme' )
-
-
 class Lease:
-  def __init__( self, nfc_lease, handler ):
+  def __init__( self, nfc_lease, file_handle ):
     self.lease = nfc_lease
-    self.handler = handler
+    self.file_handle = file_handle
+    self.file_size = os.stat( file_handle.name ).st_size
     self.cont = False
 
   def start_wait( self ):
@@ -106,7 +89,8 @@ class Lease:
       return
 
     try:
-      prog = self.handler.progress
+      cur_pos = self.file_handle.tell()
+      prog = cur_pos * 100 / self.file_size  # interestingly the progres is the offset position in the file, not how much has been uploaded, so if the vmdks are uploaded out of order, the progress is going to jump arround
       self.lease.Progress( prog )
       logging.debug( 'Lease: import progress at "{0}"%'.format( prog ) )
       if self.lease.state == vim.HttpNfcLease.State.ready:
@@ -132,7 +116,7 @@ class OVAHandler:
     Performs necessary initialization, opening the OVA file,
     processing the files and reading the embedded ovf file.
     """
-    self.handle = _create_file_handle( ova_file )
+    self.handle = file_reader( ova_file, None )
     self.tarfile = tarfile.open( fileobj=self.handle, mode='r' )
     ovf_filename = list( filter( lambda x: x.endswith( '.ovf' ), self.tarfile.getnames() ) )[0]
     ovf_file = self.tarfile.extractfile( ovf_filename )
@@ -203,7 +187,7 @@ class OVAHandler:
 
 class VMDKHandler:
   def __init__( self, vmdk_file ):
-    self.handle = _create_file_handle( vmdk_file )
+    self.handle = file_reader( vmdk_file, None )
 
   def upload( self, host, resource_pool, datacenter ):
     raise Exception( 'Not implemented' )
@@ -221,121 +205,3 @@ class VMDKHandler:
     # except Exception as e:
     #   logging.error( 'OVAHandler: Exception Uploading "{0}"'.format( e ) )
     #   raise e
-
-
-class FileHandle:
-  def __init__( self, filename ):
-    logging.debug( 'FileHandle: filename: "{0}"'.format( filename ) )
-    self.filename = filename
-    self.fh = open( filename, 'rb')
-
-    self.st_size = os.stat( filename ).st_size
-    self.offset = 0
-
-  def __del__( self ):
-    try:
-      self.fh.close()
-    except AttributeError:
-      pass
-
-  def tell( self ):
-    return self.fh.tell()
-
-  def seek( self, offset, whence=0 ):
-    if whence == 0:
-      self.offset = offset
-    elif whence == 1:
-      self.offset += offset
-    elif whence == 2:
-      self.offset = self.st_size - offset
-
-    return self.fh.seek( offset, whence )
-
-  def seekable( self ):
-    return True
-
-  def read( self, amount ):
-    self.offset += amount
-    result = self.fh.read( amount )
-    return result
-
-  # A slightly more accurate percentage
-  @property
-  def progress( self ):
-    return int( 100.0 * self.offset / self.st_size )
-
-
-class WebSourceException( Exception ):
-  pass
-
-
-class WebHandle( FileHandle ):
-  def __init__( self, url ):
-    logging.debug( 'WebHandle: url: "{0}"'.format( url ) )
-    proxy = None
-    self.url = url
-
-    if proxy:  # not doing 'is not None', so empty strings don't try and proxy   # have a proxy option to take it from the envrionment vars
-      self.opener = request.build_opener( HTTPErrorProcessorPassthrough, request.ProxyHandler( { 'http': proxy, 'https': proxy } ) )
-    else:
-      self.opener = request.build_opener( HTTPErrorProcessorPassthrough, request.ProxyHandler( {} ) )
-
-    logging.info( 'WebHandle: Downloading "{0}"'.format( url ))
-
-    try:
-      resp = self.opener.open( self.url, timeout=WEB_HANDLE_TIMEOUT )
-    except request.HTTPError as e:
-      raise WebSourceException( 'HTTPError "{0}"'.format( e ) )
-
-    except request.URLError as e:
-      if isinstance( e.reason, socket.timeout ):
-        raise WebSourceException( 'Request Timeout after {0} seconds'.format( WEB_HANDLE_TIMEOUT ) )
-
-      raise WebSourceException( 'URLError "{0}" for "{1}" via "{2}"'.format( e, self.url, proxy ) )
-
-    except socket.timeout:
-      raise WebSourceException( 'Request Timeout after {0} seconds'.format( WEB_HANDLE_TIMEOUT ) )
-
-    except socket.error as e:
-      raise WebSourceException( 'Socket Error "{0}"'.format( e ) )
-
-    if resp.code == 404:
-      raise WebSourceException( 'OVA file "{0}" not Found'.format( self.url ) )
-
-    if resp.code != 200:
-      raise WebSourceException( 'Invalid Response code "{0}"'.format( resp.code ) )
-
-    self.cache_file = NamedTemporaryFile( mode='wb', prefix='subcontractor_vmware_' )
-    size = int( resp.headers[ 'content-length' ] )
-
-    buff = resp.read( 4096 * 1024 )
-    cp = datetime.utcnow()
-    while buff:
-      if datetime.utcnow() > cp:
-        cp = datetime.utcnow() + timedelta( seconds=PROGRESS_INTERVAL )
-        logging.debug( 'WebHandle: download at {0} of {1}'.format( self.cache_file.tell(), size ) )
-
-      self.cache_file.write( buff )
-      buff = resp.read( 4096 * 1024 )
-
-    self.cache_file.flush()
-
-    super().__init__( self.cache_file.name )
-
-  def __del__( self ):
-    super().__del__()
-    try:
-      self.cache_file.close()
-    except AttributeError:
-      pass
-
-
-class PackratHandle( WebHandle ):
-  def __init__( self, url ):
-    proxy = None
-    logging.debug( 'PackratHandle: url: "{0}"'.format( url ) )
-    packrat, file = packrat_from_url( url, 'rsc', proxy )  # TODO: chage to 'ova'
-    url = packrat.fileURL( file )
-    if url is None:
-      raise ValueError( 'Unable to get file url' )
-    super().__init__( url )

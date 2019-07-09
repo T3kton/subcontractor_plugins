@@ -2,12 +2,15 @@ import logging
 import time
 import re
 import random
+from datetime import datetime, timedelta
 
 from pyVim import connect
 from pyVmomi import vim
 
+from subcontractor.credentials import getCredentials
 from subcontractor_plugins.vcenter.images import OVAHandler
 
+POLL_INTERVAL = 4
 BOOT_ORDER_MAP = {
                     'hdd': vim.vm.BootOptions.BootableDiskDevice( deviceKey=2000 ),  # TODO: figure out which is the boot drive and put it here
                     'net': vim.vm.BootOptions.BootableEthernetDevice( deviceKey=4000 ),  # TODO: figure out which is the provisinioning interface and set it here
@@ -28,16 +31,26 @@ class MOBNotFound( Exception ):
   pass
 
 
-def _connect( paramaters ):
+def _connect( connection_paramaters ):
   # work arround invalid SSL
   import ssl
   _create_unverified_https_context = ssl._create_unverified_context
   ssl._create_default_https_context = _create_unverified_https_context
   # TODO: flag for trusting SSL of connection, also there is a paramater to Connect for verified SSL
 
-  logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( paramaters[ 'host' ], paramaters[ 'username' ] ) )
+  creds = connection_paramaters[ 'credentials' ]
+  if isinstance( creds, str ):
+    creds = getCredentials( creds )
 
-  return connect.Connect( host=paramaters[ 'host' ], user=paramaters[ 'username' ], pwd=paramaters[ 'password' ] )
+  # TODO: saninity check on creds
+
+  if 'username' in creds:
+    logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( connection_paramaters[ 'host' ], creds[ 'username' ] ) )
+    return connect.SmartConnect( host=connection_paramaters[ 'host' ], user=creds[ 'username' ], pwd=creds[ 'password' ], mechanism='userpass' )
+
+  else:
+    logging.debug( 'vcenter: connecting to "{0}" with token "{1}"'.format( connection_paramaters[ 'host' ], creds[ 'token' ] ) )
+    return connect.SmartConnect( host=connection_paramaters[ 'host' ], b64token=creds[ 'token' ], mechanism='sspi' )
 
 
 def _disconnect( si ):
@@ -50,11 +63,16 @@ def _taskWait( task ):
       return
 
     try:
-      logging.debug( 'vmware: Waiting {0}% Complete ...'.format( task.info.progress ) )
+      progress = task.info.progress
     except AttributeError:
+      progress = None
+
+    if progress is not None:
+      logging.debug( 'vmware: Waiting, {0}% Complete ...'.format( task.info.progress ) )
+    else:
       logging.debug( 'vmware: Waiting ...' )
 
-    time.sleep( 2 )
+    time.sleep( POLL_INTERVAL )
 
 
 def _getDatacenter( si, name ):
@@ -120,6 +138,20 @@ def _genPaths( vm_name, disk_list, datastore ):
   logging.debug( 'vcenter: vm path: "{0}", disk Paths {1}'.format( vmx_file_path, disk_filepath_list ) )
 
   return vmx_file_path, disk_filepath_list
+
+
+def _genNetworkBacking( network ):
+  if network.__class__.__name__ == 'vim.dvs.DistributedVirtualPortgroup':
+    result = vim.vm.device.VirtualEthernetCard.DistributedVirtualPortBackingInfo()
+    result.port = vim.dvs.PortConnection()
+    result.port.portgroupKey = network.key
+    result.port.switchUuid = network.config.distributedVirtualSwitch.uuid
+
+  else:
+    result = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo()
+    result.deviceName = network.name
+
+  return result
 
 
 def host_list( paramaters ):
@@ -288,6 +320,158 @@ def _createDisk( si, dc, disk, datastore, file_path ):
     raise Exception( 'Unexpected Task State when Creating Disk: "{0}"'.format( task.info.state ) )
 
 
+def _inject_ovf_env( si, vm, vm_paramaters ):
+  logging.info( 'vcenter: injecting ovf enviornment' )
+  try:
+    property_map = vm_paramaters[ 'property_map' ]
+  except KeyError:
+    return
+
+  values = {}
+  values[ 'moid' ] = 'vm-{0}'.format( vm._moId )
+  values[ 'kind' ] = si.content.about.name
+  values[ 'version' ] = si.content.about.version
+  values[ 'vendor' ] = si.content.about.vendor
+
+  property_list = []
+  for key, value in property_map.items():
+    property_list.append( '         <Property oe:key="{0}" oe:value="{1}"/>'.format( key, value ) )
+
+  values[ 'properties' ] = '\n'.join( property_list )
+
+  spec = """<?xml version="1.0" encoding="UTF-8"?>
+<Environment
+     xmlns="http://schemas.dmtf.org/ovf/environment/1"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xmlns:oe="http://schemas.dmtf.org/ovf/environment/1"
+     xmlns:ve="http://www.vmware.com/schema/ovfenv"
+     oe:id=""
+     ve:esxId="vm-{moid}">
+   <PlatformSection>
+      <Kind>{kind}/Kind>
+      <Version>{version}</Version>
+      <Vendor>{vendor}</Vendor>
+      <Locale>en</Locale>
+   </PlatformSection>
+   <PropertySection>
+{properties}
+   </PropertySection>
+</Environment>
+""".format( **values )
+
+  opt = vim.option.OptionValue()
+  opt.key = 'guestinfo.ovfEnv'
+  opt.value = spec
+
+  configSpec = vim.vm.ConfigSpec()
+  configSpec.extraConfig = [ opt ]
+
+  task = vm.ReconfigVM_Task( configSpec )
+  _taskWait( task )
+
+  if task.info.state == 'error':
+    raise Exception( 'Error With OVF Environment Injection: "{0}"'.format( task.info.error ) )
+
+  if task.info.state != 'success':
+    raise Exception( 'Unexpected Task State With OVF Environment Injection: "{0}"'.format( task.info.state ) )
+
+
+def _create_from_template( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
+  logging.info( 'vcenter: creating from Template("{0}") "{1}"'.format( vm_paramaters[ 'template' ], vm_name ) )
+
+  template = None
+  cont = si.RetrieveContent()
+  for item in cont.viewManager.CreateContainerView( data_center, [ vim.VirtualMachine ], True ).view:
+    if item.name == vm_paramaters[ 'template' ]:
+      template = item
+      break
+
+  if template is None:
+    raise MOBNotFound( 'vcenter: unable to find template "{0}"'.format( vm_paramaters[ 'template' ] ) )
+
+  network_device_list = []
+  for device in template.config.hardware.device:
+    if isinstance( device, vim.vm.device.VirtualEthernetCard ):
+      network_device_list.append( device )
+
+  if len( network_device_list ) != len( vm_paramaters[ 'interface_list' ] ):
+    raise ValueError( 'network in template and config missmatch' )
+
+  configSpec = vim.vm.ConfigSpec()
+  customSpec = vim.vm.customization.Specification()
+
+  customSpec.identity = vim.vm.customization.LinuxPrep()
+  customSpec.identity.domain = vm_paramaters[ 'domain' ]
+  customSpec.identity.hostName = vim.vm.customization.FixedName( name=vm_paramaters[ 'hostname' ] )
+  customSpec.globalIPSettings = vim.vm.customization.GlobalIPSettings()
+  customSpec.globalIPSettings.dnsServerList = vm_paramaters[ 'dnsserver_list' ]
+  customSpec.globalIPSettings.dnsSuffixList = vm_paramaters[ 'dnssuffix_list' ]
+
+  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
+    interface = vm_paramaters[ 'interface_list' ][ i ]
+    network = _getNetwork( host, interface[ 'network' ] )
+
+    devSpec = vim.vm.device.VirtualDeviceSpec()
+    devSpec.operation = 'edit'
+    devSpec.device = network_device_list[ i ]
+    devSpec.device.addressType = 'Manual'
+    devSpec.device.macAddress = interface[ 'mac' ]
+    devSpec.device.backing = _genNetworkBacking( network )
+    configSpec.deviceChange.append( devSpec )
+
+    ipSettings = vim.vm.customization.IPSettings()
+    ipSettings.ip = vim.vm.customization.FixedIp( ipAddress=interface[ 'address' ] )
+    ipSettings.subnetMask = interface[ 'netmask' ]
+    try:
+      ipSettings.gateway = interface[ 'gateway' ]
+    except KeyError:
+      pass
+
+    adapter = vim.vm.customization.AdapterMapping()
+    adapter.adapter = ipSettings
+    adapter.macAddress = interface[ 'mac' ]
+    customSpec.nicSettingMap.append( adapter )
+
+  property_map = vm_paramaters.get( 'property_map', None )
+  if property_map is not None:
+    configSpec.vAppConfig = vim.vApp.VmConfigSpec()
+    configSpec.vAppConfig.ovfEnvironmentTransport = [ 'com.vmware.guestInfo' ]
+    counter = 0
+    for key, value in vm_paramaters[ 'property_map' ].items():
+      counter += 1
+      property = vim.vApp.PropertySpec()
+      property.operation = 'add'
+      property.info = vim.vApp.PropertyInfo()
+      property.info.key = counter
+      property.info.id = key
+      property.info.value = value
+      property.info.type = 'string'
+      configSpec.vAppConfig.property.append( property )
+
+  reloSpec = vim.vm.RelocateSpec()
+  reloSpec.datastore = datastore
+  reloSpec.host = host
+  reloSpec.pool = resource_pool
+
+  cloneSpec = vim.vm.CloneSpec()
+  cloneSpec.config = configSpec
+  cloneSpec.location = reloSpec
+  cloneSpec.customization = customSpec
+  cloneSpec.powerOn = False
+  cloneSpec.template = False
+
+  task = template.Clone( folder=folder, name=vm_name, spec=cloneSpec )
+  _taskWait( task )
+
+  if task.info.state == 'error':
+    raise Exception( 'Error With VM Clone Task: "{0}"'.format( task.info.error ) )
+
+  if task.info.state != 'success':
+    raise Exception( 'Unexpected Task State With VM Clone: "{0}"'.format( task.info.state ) )
+
+  return task.info.result.config.instanceUuid
+
+
 def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
   logging.info( 'vcenter: creating from OVA("{0}") "{1}"'.format( vm_paramaters[ 'ova' ], vm_name ) )
   handler = OVAHandler( vm_paramaters[ 'ova' ] )
@@ -344,62 +528,6 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
     _inject_ovf_env( si, _getVM( si, uuid ), vm_paramaters )
 
   return uuid
-
-
-def _inject_ovf_env( si, vm, vm_paramaters ):
-  logging.info( 'vcenter: injecting ovf enviornment' )
-  try:
-    property_map = vm_paramaters[ 'property_map' ]
-  except KeyError:
-    return
-
-  values = {}
-  values[ 'moid' ] = 'vm-{0}'.format( vm._moid )
-  values[ 'kind' ] = si.content.about.name
-  values[ 'version' ] = si.content.about.version
-  values[ 'vendor' ] = si.content.about.vendor
-
-  property_list = []
-  for key, value in property_map.items():
-    property_list.append( '         <Property oe:key="{0}" oe:value="{1}"/>'.format( key, value ) )
-
-  values[ 'properties' ] = '\n'.join( property_list )
-
-  spec = """<?xml version="1.0" encoding="UTF-8"?>
-<Environment
-     xmlns="http://schemas.dmtf.org/ovf/environment/1"
-     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-     xmlns:oe="http://schemas.dmtf.org/ovf/environment/1"
-     xmlns:ve="http://www.vmware.com/schema/ovfenv"
-     oe:id=""
-     ve:esxId="vm-{moid}">
-   <PlatformSection>
-      <Kind>{kind}/Kind>
-      <Version>{version}</Version>
-      <Vendor>{vendor}</Vendor>
-      <Locale>en</Locale>
-   </PlatformSection>
-   <PropertySection>
-{ properties }
-   </PropertySection>
-</Environment>
-""".format( values )
-
-  opt = vim.option.OptionValue()
-  opt.key = 'guestinfo.ovfEnv'
-  opt.value = spec
-
-  configSpec = vim.vm.ConfigSpec()
-  configSpec.extraConfig = [ opt ]
-
-  task = vm.ReconfigVM_Task( configSpec )
-  _taskWait( task )
-
-  if task.info.state == 'error':
-    raise Exception( 'Error With OVF Environment Injection: "{0}"'.format( task.info.error ) )
-
-  if task.info.state != 'success':
-    raise Exception( 'Unexpected Task State With OVF Environment Injection: "{0}"'.format( task.info.state ) )
 
 
 def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
@@ -468,8 +596,7 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
     devSpec.device.addressType = 'Manual'
     devSpec.device.macAddress = interface[ 'mac' ]
     devSpec.device.unitNumber = i + 7
-    devSpec.device.backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo()
-    devSpec.device.backing.deviceName = network.name
+    devSpec.device.backing = _genNetworkBacking( network )
     configSpec.deviceChange.append( devSpec )
 
   for item in vm_paramaters[ 'boot_order' ]:
@@ -491,6 +618,22 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
   elif vmu == 'auto':
     configSpec.flags.virtualMmuUsage = 'automatic'
 
+  property_map = vm_paramaters.get( 'property_map', None )
+  if property_map is not None:
+    configSpec.vAppConfig = vim.vApp.VmConfigSpec()
+    configSpec.vAppConfig.ovfEnvironmentTransport = [ 'com.vmware.guestInfo' ]
+    counter = 0
+    for key, value in vm_paramaters[ 'property_map' ].items():
+      counter += 1
+      property = vim.vApp.PropertySpec()
+      property.operation = 'add'
+      property.info = vim.vApp.PropertyInfo()
+      property.info.key = counter
+      property.info.id = key
+      property.info.value = value
+      property.info.type = 'string'
+      configSpec.vAppConfig.property.append( property )
+
   task = folder.CreateVm( config=configSpec, pool=resource_pool, host=host )
 
   _taskWait( task )
@@ -510,6 +653,7 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
   vm_name = vm_paramaters[ 'name' ]
 
   # vcenter static mac are 00:50:56:00:00:00 -> 00:50:56:3F:FF:FF
+  # not used by OVA deploy, mabey it should?
   for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
     mac = '005056{0:06x}'.format( random.randint( 0, 4194303 ) )  # TODO: check to see if the mac is allready in use, also make them sequential
     vm_paramaters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
@@ -525,6 +669,8 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
 
     if 'ova' in vm_paramaters:
       vm_uuid = _create_from_ova( si, vm_name, paramaters[ 'connection' ][ 'host' ], data_center, resource_pool, folder, host, datastore, vm_paramaters )
+    elif 'template' in vm_paramaters:
+      vm_uuid = _create_from_template( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters )
     else:
       vm_uuid = _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters )
 
@@ -670,10 +816,13 @@ def set_power( paramaters ):
     if task is not None:
       while task.info.state not in ( vim.TaskInfo.State.success, vim.TaskInfo.State.error ):
         logging.debug( 'vcenter: vm "{0}"({1}) power "{2}" at {3}%'.format( vm_name, vm_uuid, desired_state, task.info.progress ) )
-        time.sleep( 2 )
+        time.sleep( POLL_INTERVAL )
 
       if task.info.state == vim.TaskInfo.State.error:
         raise Exception( 'vcenter: Unable to set power state of "{0}"({1}) to "{2}"'.format( vm_name, vm_uuid, desired_state ) )
+
+    else:
+      time.sleep( POLL_INTERVAL * 2 )  # give the vm the chance to do something
 
     logging.info( 'vcenter: setting power state of "{0}"({1}) to "{2}" complete'.format( vm_name, vm_uuid, desired_state ) )
     return { 'state': _power_state_convert( vm.runtime.powerState ) }
@@ -693,6 +842,51 @@ def power_state( paramaters ):
     vm = _getVM( si, vm_uuid )
 
     return { 'state': _power_state_convert( vm.runtime.powerState ) }
+
+  finally:
+    _disconnect( si )
+
+
+def execute( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
+  vm_uuid = paramaters[ 'uuid' ]
+  vm_name = paramaters[ 'name' ]
+  program = paramaters[ 'program' ]
+  args = paramaters[ 'args' ]
+  dir = paramaters[ 'dir' ]
+
+  logging.info( 'vcenter: executing "{0}" "{1}" on "{2}"({3})'.format( program, args, vm_name, vm_uuid ) )
+  si = _connect( connection_paramaters )
+  try:
+    vm = _getVM( si, vm_uuid )
+
+    if vm.guest.toolsStatus in ( 'toolsNotInstalled', 'toolsNotRunning' ):
+      raise Exception( 'VMwareTools is not installed or not Running')
+
+    pManager = si.content.guestOperationsManager.processManager
+
+    passwordAuth = vim.vm.guest.NamePasswordAuthentication( username=paramaters[ 'username' ], password=paramaters[ 'password' ] )
+
+    programSpec = vim.vm.guest.ProcessManager.ProgramSpec()
+    programSpec.programPath = program
+    programSpec.arguments = args
+    programSpec.workingDirectory = dir
+
+    pid = pManager.StartProgramInGuest( vm=vm, auth=passwordAuth, spec=programSpec )
+
+    logging.debug( 'vcenter: executing "{0}" "{1}" on "{2}"({3}) is pid "{4}"'.format( program, args, vm_name, vm_uuid, pid ) )
+
+    finish_by = timedelta( seconds=paramaters[ 'timeout' ] ) + datetime.utcnow()
+    pList = pManager.ListProcessesInGuest( vm=vm, auth=passwordAuth, pids=[ pid ] )
+    while pList[0].exitCode is None:
+      logging.debug( 'vcenter: executing "{0}" "{1}" on "{2}"({3}) waiting for "{4}"...'.format( program, args, vm_name, vm_uuid, pid ) )
+      time.sleep( POLL_INTERVAL )
+      pList = pManager.ListProcessesInGuest( vm=vm, auth=passwordAuth, pids=[ pid ] )
+
+      if datetime.utcnow() > finish_by:
+        raise Exception( 'timeout waiting for command to finish' )
+
+    return { 'rc': pList[0].exitCode }
 
   finally:
     _disconnect( si )
