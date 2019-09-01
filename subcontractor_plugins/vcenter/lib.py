@@ -230,10 +230,13 @@ def datastore_list( paramaters ):
   connection_paramaters = paramaters[ 'connection' ]
   logging.info( 'vcenter: getting Datastore List for dc: "{0}" rp: "{1}" host: "{2}"'.format( paramaters[ 'datacenter' ], paramaters[ 'cluster' ], paramaters[ 'host' ] ) )
   paramaters[ 'min_free_space' ] = paramaters[ 'min_free_space' ]
-  try:
-    paramaters[ 'name_regex' ] = re.compile( paramaters[ 'name_regex' ] )
-  except TypeError:
-    pass
+  if paramaters.get( 'name_regex', None ):  # could also be ''
+    try:
+      paramaters[ 'name_regex' ] = re.compile( paramaters[ 'name_regex' ] )
+    except TypeError:
+      paramaters[ 'name_regex' ] = None
+  else:
+    paramaters[ 'name_regex' ] = None
 
   si = _connect( connection_paramaters )
   try:
@@ -617,6 +620,9 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
     configSpec.flags.virtualMmuUsage = 'off'
   elif vmu == 'auto':
     configSpec.flags.virtualMmuUsage = 'automatic'
+
+  if vm_paramaters.get( 'virtual_vhv', False ):
+    configSpec.nestedHVEnable = True
 
   property_map = vm_paramaters.get( 'property_map', None )
   if property_map is not None:
