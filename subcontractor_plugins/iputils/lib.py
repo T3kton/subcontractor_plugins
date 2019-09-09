@@ -26,14 +26,17 @@ def port_state( paramaters ):
   logging.debug( 'iputils: checking port "{0}" on "{1}"...'.format( port, target ) )
 
   sock = socket.socket()
-  sock.settimeout( 5 )
+  sock.settimeout( 5 )  # TODO: also do 'noroute to host'
   try:
     sock.connect( ( target, port ) )
     state = 'open'
   except socket.timeout:
     state = 'timeout'
-  except socket.error:
-    state = 'closed'
+  except socket.error as e:
+    if e.errno == 113:
+      state = 'no route to host'
+    else:
+      state = 'closed'
   except Exception as e:
     state = 'exception: "{0}"({1})'.format( str( e ), type( e ).__name__ )
 

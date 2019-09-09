@@ -622,7 +622,7 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
     configSpec.flags.virtualMmuUsage = 'automatic'
 
   if vm_paramaters.get( 'virtual_vhv', False ):
-    configSpec.nestedHVEnable = True
+    configSpec.nestedHVEnabled = True
 
   property_map = vm_paramaters.get( 'property_map', None )
   if property_map is not None:
