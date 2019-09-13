@@ -1,3 +1,10 @@
+subcontractor-plugins (0.6.0-1) xenial; urgency=medium
+
+  * Initial VCenter Export
+  * Initial IPMI Support
+
+ -- Peter Howe <pnhowe@gmail.com>  Fri, 13 Sep 2019 07:28:15 -0600
+
 subcontractor-plugins (0.4-1) xenial; urgency=medium
 
   * contractor 0.4
