@@ -8,7 +8,7 @@ from pyVim import connect
 from pyVmomi import vim
 
 from subcontractor.credentials import getCredentials
-from subcontractor_plugins.vcenter.images import OVAHandler
+from subcontractor_plugins.vcenter.images import OVAImportHandler, OVAExportHandler
 
 POLL_INTERVAL = 4
 BOOT_ORDER_MAP = {
@@ -477,7 +477,7 @@ def _create_from_template( si, vm_name, data_center, resource_pool, folder, host
 
 def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
   logging.info( 'vcenter: creating from OVA("{0}") "{1}"'.format( vm_paramaters[ 'ova' ], vm_name ) )
-  handler = OVAHandler( vm_paramaters[ 'ova' ] )
+  handler = OVAImportHandler( vm_paramaters[ 'ova' ] )
 
   ovfManager = si.content.ovfManager
 
@@ -867,7 +867,7 @@ def execute( paramaters ):
     vm = _getVM( si, vm_uuid )
 
     if vm.guest.toolsStatus in ( 'toolsNotInstalled', 'toolsNotRunning' ):
-      raise Exception( 'VMwareTools is not installed or not Running')
+      return { 'error': 'VMwareTools is not installed or not Running' }
 
     pManager = si.content.guestOperationsManager.processManager
 
@@ -893,6 +893,45 @@ def execute( paramaters ):
         raise Exception( 'timeout waiting for command to finish' )
 
     return { 'rc': pList[0].exitCode }
+
+  finally:
+    _disconnect( si )
+
+
+def mark_as_template( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
+  vm_uuid = paramaters[ 'uuid' ]
+  vm_name = paramaters[ 'name' ]
+  as_template = paramaters[ 'as_template' ]
+
+  logging.info( 'vcenter: mark_as_template "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, as_template ) )
+  si = _connect( connection_paramaters )
+  try:
+    vm = _getVM( si, vm_uuid )
+
+    if as_template:
+      vm.markAsTemplate()
+    else:
+      vm.markAsVirtualMachine()
+
+  finally:
+    _disconnect( si )
+
+
+def export( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
+  vm_uuid = paramaters[ 'uuid' ]
+  vm_name = paramaters[ 'name' ]
+  repo_paramaters = paramaters[ 'repo_paramaters' ]
+
+  logging.info( 'vcenter: exporting "{0}"({1})...'.format( vm_name, vm_uuid ) )
+  handler = OVAExportHandler( '{0}.ova'.format( vm_name ), repo_paramaters )
+
+  si = _connect( connection_paramaters )
+  try:
+    vm = _getVM( si, vm_uuid )
+
+    handler.export( vm.exportVm( repo_paramaters ) )
 
   finally:
     _disconnect( si )

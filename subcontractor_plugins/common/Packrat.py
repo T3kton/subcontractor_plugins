@@ -6,6 +6,8 @@ from urllib import request, parse
 # TODO: study the way the proxy handler works and make this act more like that, we are carying way to much old baggage here
 # schema:   packrat(s)://host/repo/type/package[?version]  if version is omitted, then the latest version
 class PackratHandler( request.BaseHandler ):
+  handler_order = 500  # same as regular http handler, mabey just before?
+
   def __init__( self, check_hash=True, gpg_key_file=None ):
     super().__init__()
     self.timeout = socket._GLOBAL_DEFAULT_TIMEOUT
@@ -34,6 +36,15 @@ class PackratHandler( request.BaseHandler ):
     if not req.host:
       raise request.URLError( 'packrat error: no host given' )
 
+    if req.method == 'GET':
+      return self._open_get( req, ssl )
+    elif req.method == 'POST':
+      return self._open_post( req, ssl )
+    else:
+      raise ValueError( 'Invalid Method "{0}"'.format( req.method ) )
+
+  def _open_get( self, req, ssl ):
+    header_map = {}
     package, version = parse.splitquery( req.selector )
     try:
       _, repo, file_type, package = package.split( '/' )
@@ -60,7 +71,19 @@ class PackratHandler( request.BaseHandler ):
     else:
       url = 'http://{0}/{1}/{2}'.format( req.host, repo, entry[ 'path' ] )
 
-    return self.opener.open( url, timeout=req.timeout )
+    return self.opener.open( url, timeout=req.timeout, headers=header_map, method='GET' )
+
+  def _open_post( self, req, ssl ):
+    header_map = {
+                    'Content-Type': 'application/octet-stream'
+                  }
+
+    if ssl:
+      url = 'https://{0}/api/upload'.format( req.host )
+    else:
+      url = 'http://{0}/api/upload'.format( req.host )
+
+    return self.opener.open( url, timeout=req.timeout, headers=header_map, method='POST' )
 
   def _request( self, host, repo, file, timeout ):
     url = 'http://{0}/{1}/{2}'.format( host, repo, file )

@@ -3,6 +3,7 @@ import tarfile
 import logging
 import time
 import os
+import tempfile
 from threading import Timer
 
 from urllib import request
@@ -47,7 +48,7 @@ class Lease:
       if count > 60:
         raise Exception( 'Timeout waiting for least to be ready' )
 
-      logging.info( 'Waiting for lease to be ready...' )
+      logging.info( 'Lease: Waiting for lease to be ready...' )
       time.sleep( 4 )
 
     if self.lease.state == vim.HttpNfcLease.State.error:
@@ -62,6 +63,18 @@ class Lease:
         return deviceUrl
 
     raise Exception( 'Failed to find deviceUrl for file {0}'.format( fileItem.path ) )
+
+  def get_device_url_list( self ):
+    result = []
+
+    for device in self.lease.info.deviceUrl:
+      if not device.targetId:
+        logging.warning( 'Lease: No targetId for "{0}", skipping...'.format( device.url ) )
+        continue
+
+      result.append( ( device.targetId, device.url ) )
+
+    return result
 
   def complete( self ):
     self.lease.Complete()
@@ -105,9 +118,9 @@ class Lease:
 
 
 #  TODO: validate the hashes against the .mf file, so far SHA256 and SHA1 hashes are used
-class OVAHandler:
+class OVAImportHandler:
   """
-  OVAHandler handles most of the OVA operations.
+  OVAImportHandler handles most of the OVA operations.
   It processes the tarfile, matches disk keys to files and
   uploads the disks, while keeping the progress up to date for the lease.
   """
@@ -141,15 +154,15 @@ class OVAHandler:
 
     try:
       lease.start()
-      logging.debug( 'OVAHandler: Starting file upload(s)...' )
+      logging.debug( 'OVAImportHandler: Starting file upload(s)...' )
       for fileItem in import_spec_result.fileItem:
         self.upload_disk( fileItem, lease, host )
 
-      logging.debug( 'OVAHandler: File upload(s) complete' )
+      logging.debug( 'OVAImportHandler: File upload(s) complete' )
       lease.complete()
 
     except Exception as e:
-      logging.error( 'OVAHandler: Exception uploading files' )
+      logging.error( 'OVAImportHandler: Exception uploading files' )
       lease.abort( vmodl.fault.SystemError( reason=str( e ) ) )
       raise e
 
@@ -163,7 +176,7 @@ class OVAHandler:
     Upload an individual disk. Passes the file handle of the
     disk directly to the urlopen request.
     """
-    logging.info( 'OVAHandler: Uploading "{0}"...'.format( fileItem ) )
+    logging.info( 'OVAImportHandler: Uploading "{0}"...'.format( fileItem ) )
     file = self.get_disk( fileItem )
     if file is None:
         return
@@ -177,12 +190,52 @@ class OVAHandler:
       sslContext = None
 
     try:
-      req = request.Request( url, file, headers )
+      req = request.Request( url, data=file, headers=headers, method='POST' )
       request.urlopen( req, context=sslContext )
 
     except Exception as e:
-      logging.error( 'OVAHandler: Exception Uploading "{0}", lease info: "{1}": "{2}"'.format( e, lease.info, fileItem ) )
+      logging.error( 'OVAImportHandler: Exception Uploading "{0}", lease info: "{1}": "{2}"'.format( e, lease.info, fileItem ) )
       raise e
+
+
+class OVAExportHandler:
+  def __init__( self, name, repo_paramaters ):
+    self.uri = repo_paramaters[ 'uri' ]
+    self.username = repo_paramaters.get( 'username', None )
+    self.password = repo_paramaters.get( 'password', None )
+    self.work_file = tempfile.NamedTemporaryFile( mode='wb', dir='/tmp', delete=False )
+    self.tarfile = tarfile.open( fileobj=self.handle, mode='w' )
+
+  def export( self, nfc_lease ):
+    headers = {}
+    if hasattr( ssl, '_create_unverified_context' ):
+      sslContext = ssl._create_unverified_context()
+    else:
+      sslContext = None
+
+    lease = Lease( nfc_lease )
+    lease.start_wait()
+
+    try:
+      lease.start()
+      logging.debug( 'OVAExportHandler: Starting file downloads(s)...' )
+      for targetId, url in lease.get_device_url_list():
+        req = request.Request( url, headers=headers, method='GET' )
+        httpobj = request.urlopen( req, context=sslContext )
+        self.tarfile.addfile( tarfile.TarInfo( name=targetId ), fileobj=httpobj )
+
+      logging.debug( 'OVAExportHandler: File upload(s) complete' )
+      lease.complete()
+
+    except Exception as e:
+      logging.error( 'OVAExportHandler: Exception downloading files' )
+      lease.abort( vmodl.fault.SystemError( reason=str( e ) ) )
+      raise e
+
+    finally:
+      lease.stop()
+      self.tarfile.close()  # TODO: the open and the close need to be better thought out, all file handles in just export, or something else to trigger the close
+      self.work_file.close()
 
 
 class VMDKHandler:
@@ -203,5 +256,5 @@ class VMDKHandler:
     #   request.urlopen( req, context=sslContext )
     #
     # except Exception as e:
-    #   logging.error( 'OVAHandler: Exception Uploading "{0}"'.format( e ) )
+    #   logging.error( 'OVAImportHandler: Exception Uploading "{0}"'.format( e ) )
     #   raise e
