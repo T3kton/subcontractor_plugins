@@ -479,7 +479,7 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
   logging.info( 'vcenter: creating from OVA("{0}") "{1}"'.format( vm_paramaters[ 'ova' ], vm_name ) )
   handler = OVAImportHandler( vm_paramaters[ 'ova' ] )
 
-  ovfManager = si.content.ovfManager
+  ovf_manager = si.content.ovfManager
 
   network_mapping = []
   for interface in vm_paramaters[ 'interface_list' ]:
@@ -511,7 +511,7 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
 
   logging.debug( 'vcenter: Import Spec Params: "{0}"'.format( cisp ) )
 
-  result = ovfManager.CreateImportSpec( handler.descriptor, resource_pool, datastore, cisp )
+  result = ovf_manager.CreateImportSpec( handler.descriptor, resource_pool, datastore, cisp )
 
   for property in result.importSpec.configSpec.vAppConfig.property:
     info = property.info
@@ -907,12 +907,17 @@ def mark_as_template( paramaters ):
   logging.info( 'vcenter: mark_as_template "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, as_template ) )
   si = _connect( connection_paramaters )
   try:
+    if si.content.about.productLineId == 'embeddedEsx':  # mark as template not supported on ESX
+      return {}
+
     vm = _getVM( si, vm_uuid )
 
     if as_template:
-      vm.markAsTemplate()
+      vm.MarkAsTemplate()
     else:
-      vm.markAsVirtualMachine()
+      vm.MarkAsVirtualMachine()
+
+    return {}
 
   finally:
     _disconnect( si )
@@ -925,11 +930,25 @@ def export( paramaters ):
   repo_paramaters = paramaters[ 'repo_paramaters' ]
 
   logging.info( 'vcenter: exporting "{0}"({1})...'.format( vm_name, vm_uuid ) )
-  handler = OVAExportHandler( '{0}.ova'.format( vm_name ), repo_paramaters )
 
   si = _connect( connection_paramaters )
   try:
+    ovf_manager = si.content.ovfManager
+
     vm = _getVM( si, vm_uuid )
+
+    ovf_parameters = vim.OvfManager.CreateDescriptorParams()
+    ovf_parameters.name = vm.name
+    ovf_parameters.ovfFiles = handler.file_list()
+    vm_descriptor_result = ovf_manager.CreateDescriptor( obj=vm, cdp=ovf_parameters )
+
+    if vm_descriptor_result.error:
+      logging.error( 'vcenter: error creating ovf descriptor "{0}"'.format( vm_descriptor_result.error[0].fault ) )
+      raise Exception( 'Error createing ovf descriptor: "{0}"'.format( vm_descriptor_result.error[0].fault ) )
+
+    vm_descriptor_result.ovfDescriptor
+
+    handler = OVAExportHandler( vm_name, repo_paramaters )
 
     handler.export( vm.exportVm( repo_paramaters ) )
 

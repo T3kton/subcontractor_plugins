@@ -199,12 +199,19 @@ class OVAImportHandler:
 
 
 class OVAExportHandler:
-  def __init__( self, name, repo_paramaters ):
+  def __init__( self, name, repo_paramaters, ovf_file ):
+    self.name = name
     self.uri = repo_paramaters[ 'uri' ]
     self.username = repo_paramaters.get( 'username', None )
     self.password = repo_paramaters.get( 'password', None )
     self.work_file = tempfile.NamedTemporaryFile( mode='wb', dir='/tmp', delete=False )
     self.tarfile = tarfile.open( fileobj=self.handle, mode='w' )
+    self.tarfile.addfile( tarfile.TarInfo( name='{0}.ovf'.format( name ) ), fileobj=ovf_file )
+
+  def file_list( self ):
+    result = []
+    return result
+
 
   def export( self, nfc_lease ):
     headers = {}
