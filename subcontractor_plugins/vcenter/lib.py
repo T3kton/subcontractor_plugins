@@ -2,6 +2,7 @@ import logging
 import time
 import re
 import random
+import ssl
 from datetime import datetime, timedelta
 
 from pyVim import connect
@@ -33,7 +34,6 @@ class MOBNotFound( Exception ):
 
 def _connect( connection_paramaters ):
   # work arround invalid SSL
-  import ssl
   _create_unverified_https_context = ssl._create_unverified_context
   ssl._create_default_https_context = _create_unverified_https_context
   # TODO: flag for trusting SSL of connection, also there is a paramater to Connect for verified SSL
@@ -477,7 +477,13 @@ def _create_from_template( si, vm_name, data_center, resource_pool, folder, host
 
 def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
   logging.info( 'vcenter: creating from OVA("{0}") "{1}"'.format( vm_paramaters[ 'ova' ], vm_name ) )
-  handler = OVAImportHandler( vm_paramaters[ 'ova' ] )
+  super().__init__()
+  if hasattr( ssl, '_create_unverified_context' ):
+    sslContext = ssl._create_unverified_context()
+  else:
+    sslContext = None
+
+  handler = OVAImportHandler( vm_paramaters[ 'ova' ], sslContext )
 
   ovf_manager = si.content.ovfManager
 
@@ -927,30 +933,20 @@ def export( paramaters ):
   connection_paramaters = paramaters[ 'connection' ]
   vm_uuid = paramaters[ 'uuid' ]
   vm_name = paramaters[ 'name' ]
-  repo_paramaters = paramaters[ 'repo_paramaters' ]
+  url = paramaters[ 'url' ]
 
-  logging.info( 'vcenter: exporting "{0}"({1})...'.format( vm_name, vm_uuid ) )
+  if hasattr( ssl, '_create_unverified_context' ):
+    sslContext = ssl._create_unverified_context()
+  else:
+    sslContext = None
+
+  logging.info( 'vcenter: exporting "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, url ) )
 
   si = _connect( connection_paramaters )
   try:
-    ovf_manager = si.content.ovfManager
-
+    handler = OVAExportHandler( si.content.ovfManager, url, sslContext )
     vm = _getVM( si, vm_uuid )
-
-    ovf_parameters = vim.OvfManager.CreateDescriptorParams()
-    ovf_parameters.name = vm.name
-    ovf_parameters.ovfFiles = handler.file_list()
-    vm_descriptor_result = ovf_manager.CreateDescriptor( obj=vm, cdp=ovf_parameters )
-
-    if vm_descriptor_result.error:
-      logging.error( 'vcenter: error creating ovf descriptor "{0}"'.format( vm_descriptor_result.error[0].fault ) )
-      raise Exception( 'Error createing ovf descriptor: "{0}"'.format( vm_descriptor_result.error[0].fault ) )
-
-    vm_descriptor_result.ovfDescriptor
-
-    handler = OVAExportHandler( vm_name, repo_paramaters )
-
-    handler.export( vm.exportVm( repo_paramaters ) )
+    handler.export( vm, vm_name )
 
   finally:
     _disconnect( si )

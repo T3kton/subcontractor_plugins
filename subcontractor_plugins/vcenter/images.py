@@ -5,11 +5,12 @@ import time
 import os
 import tempfile
 from threading import Timer
+from datetime import datetime, timedelta
 
 from urllib import request
 from pyVmomi import vim, vmodl
 
-from subcontractor_plugins.common.files import file_reader
+from subcontractor_plugins.common.files import file_reader, file_writer
 
 """
 Derived from code from https://github.com/vmware/pyvmomi-community-samples/blob/master/samples/deploy_ova.py and deploy_ovf.py
@@ -34,11 +35,10 @@ def _get_tarfile_size( tarfile ):
   return size
 
 
-class Lease:
-  def __init__( self, nfc_lease, file_handle ):
+class Lease():
+  def __init__( self, nfc_lease ):
+    super().__init__()
     self.lease = nfc_lease
-    self.file_handle = file_handle
-    self.file_size = os.stat( file_handle.name ).st_size
     self.cont = False
 
   def start_wait( self ):
@@ -56,25 +56,6 @@ class Lease:
 
     if self.lease.state == vim.HttpNfcLease.State.done:
       raise Exception( 'Lease done before we start?' )
-
-  def get_device_url( self, fileItem ):
-    for deviceUrl in self.lease.info.deviceUrl:
-      if deviceUrl.importKey == fileItem.deviceId:
-        return deviceUrl
-
-    raise Exception( 'Failed to find deviceUrl for file {0}'.format( fileItem.path ) )
-
-  def get_device_url_list( self ):
-    result = []
-
-    for device in self.lease.info.deviceUrl:
-      if not device.targetId:
-        logging.warning( 'Lease: No targetId for "{0}", skipping...'.format( device.url ) )
-        continue
-
-      result.append( ( device.targetId, device.url ) )
-
-    return result
 
   def complete( self ):
     self.lease.Complete()
@@ -97,6 +78,20 @@ class Lease:
   def stop( self ):
     self.cont = False
 
+
+class ImportLease( Lease ):
+  def __init__( self, nfc_lease, file_handle ):
+    super().__init__( nfc_lease )
+    self.file_handle = file_handle
+    self.file_size = os.stat( file_handle.name ).st_size
+
+  def get_device_url( self, fileItem ):
+    for deviceUrl in self.lease.info.deviceUrl:
+      if deviceUrl.importKey == fileItem.deviceId:
+        return deviceUrl
+
+    raise Exception( 'Failed to find deviceUrl for file {0}'.format( fileItem.path ) )
+
   def _timer_cb( self ):
     if not self.cont:
       return
@@ -113,71 +108,65 @@ class Lease:
         self.cont = False
 
     except Exception as e:  # don't renew the timer
-      logging.warning( 'Lease: Exception during _timer_cb: "{0}"'.format( e ) )
+      logging.warning( 'ImportLease: Exception during _timer_cb: "{0}"'.format( e ) )
+      self.cont = False
+
+
+class ExportLease( Lease ):
+  def __init__( self, nfc_lease ):
+    super().__init__( nfc_lease )
+    self.progress = 0
+
+  def _timer_cb( self ):
+    if not self.cont:
+      return
+
+    try:
+      self.lease.Progress( self.progress  )
+      logging.debug( 'ExportLease: export progress at "{0}"%'.format( self.progress  ) )
+      if self.lease.state == vim.HttpNfcLease.State.ready:
+        Timer( PROGRESS_INTERVAL, self._timer_cb ).start()
+
+      else:
+        self.cont = False
+
+    except Exception as e:  # don't renew the timer
+      logging.warning( 'ExportLease: Exception during _timer_cb: "{0}"'.format( e ) )
       self.cont = False
 
 
 #  TODO: validate the hashes against the .mf file, so far SHA256 and SHA1 hashes are used
-class OVAImportHandler:
+class OVAImportHandler():
   """
   OVAImportHandler handles most of the OVA operations.
   It processes the tarfile, matches disk keys to files and
   uploads the disks, while keeping the progress up to date for the lease.
   """
-  def __init__( self, ova_file ):
+  def __init__( self, ova_file, sslContext ):
     """
     Performs necessary initialization, opening the OVA file,
     processing the files and reading the embedded ovf file.
     """
-    self.handle = file_reader( ova_file, None )
+    self.handle = file_reader( ova_file, None, sslContext )
     self.tarfile = tarfile.open( fileobj=self.handle, mode='r' )
     ovf_filename = list( filter( lambda x: x.endswith( '.ovf' ), self.tarfile.getnames() ) )[0]
     ovf_file = self.tarfile.extractfile( ovf_filename )
     self.descriptor = ovf_file.read().decode()
 
-  def get_disk( self, fileItem ):
+  def _get_disk( self, fileItem ):
     """
     Does translation for disk key to file name, returning a file handle.
     """
     ovf_filename = list( filter( lambda x: x == fileItem.path, self.tarfile.getnames() ) )[0]
     return self.tarfile.extractfile( ovf_filename )
 
-  def upload( self, host, resource_pool, import_spec_result, datacenter ):
-    """
-    Uploads all the disks, with a progress keep-alive.
-
-    return uuid of vm
-    """
-    lease = Lease( resource_pool.ImportVApp( spec=import_spec_result.importSpec, folder=datacenter.vmFolder ), self.handle )
-    lease.start_wait()
-    uuid = lease.info.entity.config.instanceUuid
-
-    try:
-      lease.start()
-      logging.debug( 'OVAImportHandler: Starting file upload(s)...' )
-      for fileItem in import_spec_result.fileItem:
-        self.upload_disk( fileItem, lease, host )
-
-      logging.debug( 'OVAImportHandler: File upload(s) complete' )
-      lease.complete()
-
-    except Exception as e:
-      logging.error( 'OVAImportHandler: Exception uploading files' )
-      lease.abort( vmodl.fault.SystemError( reason=str( e ) ) )
-      raise e
-
-    finally:
-      lease.stop()
-
-    return uuid
-
-  def upload_disk( self, fileItem, lease, host ):
+  def _upload_disk( self, fileItem, lease, host ):
     """
     Upload an individual disk. Passes the file handle of the
     disk directly to the urlopen request.
     """
     logging.info( 'OVAImportHandler: Uploading "{0}"...'.format( fileItem ) )
-    file = self.get_disk( fileItem )
+    file = self._get_disk( fileItem )
     if file is None:
         return
 
@@ -197,71 +186,131 @@ class OVAImportHandler:
       logging.error( 'OVAImportHandler: Exception Uploading "{0}", lease info: "{1}": "{2}"'.format( e, lease.info, fileItem ) )
       raise e
 
+  def upload( self, host, resource_pool, import_spec_result, datacenter ):
+    """
+    Uploads all the disks, with a progress keep-alive.
 
-class OVAExportHandler:
-  def __init__( self, name, repo_paramaters, ovf_file ):
-    self.name = name
-    self.uri = repo_paramaters[ 'uri' ]
-    self.username = repo_paramaters.get( 'username', None )
-    self.password = repo_paramaters.get( 'password', None )
-    self.work_file = tempfile.NamedTemporaryFile( mode='wb', dir='/tmp', delete=False )
-    self.tarfile = tarfile.open( fileobj=self.handle, mode='w' )
-    self.tarfile.addfile( tarfile.TarInfo( name='{0}.ovf'.format( name ) ), fileobj=ovf_file )
-
-  def file_list( self ):
-    result = []
-    return result
-
-
-  def export( self, nfc_lease ):
-    headers = {}
-    if hasattr( ssl, '_create_unverified_context' ):
-      sslContext = ssl._create_unverified_context()
-    else:
-      sslContext = None
-
-    lease = Lease( nfc_lease )
+    return uuid of vm
+    """
+    lease = ImportLease( resource_pool.ImportVApp( spec=import_spec_result.importSpec, folder=datacenter.vmFolder ), self.handle )
     lease.start_wait()
+    uuid = lease.info.entity.config.instanceUuid
 
     try:
       lease.start()
-      logging.debug( 'OVAExportHandler: Starting file downloads(s)...' )
-      for targetId, url in lease.get_device_url_list():
-        req = request.Request( url, headers=headers, method='GET' )
-        httpobj = request.urlopen( req, context=sslContext )
-        self.tarfile.addfile( tarfile.TarInfo( name=targetId ), fileobj=httpobj )
+      logging.debug( 'OVAImportHandler: Starting file upload(s)...' )
+      for fileItem in import_spec_result.fileItem:
+        self._upload_disk( fileItem, lease, host )
 
-      logging.debug( 'OVAExportHandler: File upload(s) complete' )
+      logging.debug( 'OVAImportHandler: File upload(s) complete' )
       lease.complete()
 
     except Exception as e:
-      logging.error( 'OVAExportHandler: Exception downloading files' )
+      logging.error( 'OVAImportHandler: Exception uploading files' )
       lease.abort( vmodl.fault.SystemError( reason=str( e ) ) )
       raise e
 
     finally:
       lease.stop()
-      self.tarfile.close()  # TODO: the open and the close need to be better thought out, all file handles in just export, or something else to trigger the close
-      self.work_file.close()
+
+    return uuid
 
 
-class VMDKHandler:
-  def __init__( self, vmdk_file ):
-    self.handle = file_reader( vmdk_file, None )
+class OVAExportHandler():
+  def __init__( self, ovf_manager, url, sslContext ):
+    super().__init__()
+    self.ovf_manager = ovf_manager
+    self.url = url
+    self.sslContext = sslContext
+
+  def _downloadFiles( self, wrk_dir, lease, headers ):
+    ovf_files = []
+
+    logging.debug( 'OVAExportHandler: Starting file downloads(s)...' )
+    for device in self.lease.info.deviceUrl:
+      if not device.targetId:
+        logging.debug( 'ExportLease: No targetId for "{0}", skipping...'.format( device.url ) )
+        continue
+
+      logging.debug( 'OVAExportHandler: Downloading "{0}"...'.format( device.url ) )
+      req = request.Request( device.url, headers=headers, method='GET' )
+      resp = request.urlopen( req, context=self.sslContext )
+      size = int( resp.headers[ 'content-length' ] )
+      local_file = open( os.path.join( wrk_dir, device.targetId ), 'wb' )
+      buff = resp.read( 4096 * 1024 )
+      cp = datetime.utcnow()
+      while buff:
+        if datetime.utcnow() > cp:
+          cp = datetime.utcnow() + timedelta( seconds=PROGRESS_INTERVAL )
+          logging.debug( 'OVAExportHandler: download at {0} of {1}'.format( local_file.tell(), size ) )
+
+        local_file.write( buff )
+        buff = resp.read( 4096 * 1024 )
+
+      ovf_file = vim.OvfManager.OvfFile()
+      ovf_file.deviceId = device.key
+      ovf_file.path = device.targetId
+      ovf_file.size = local_file.size
+      ovf_files.append( ovf_file )
+
+      local_file.close()
+
+    return ovf_files
+
+  def export( self, vm, vm_name ):
+    headers = {}
+    ova_file = tempfile.NamedTemporaryFile( mode='wb', dir='/tmp', prefix='subcontractor_vcenter_', delete=False )
+    wrk_dir = tempfile.TemporaryDirectory( prefix='subcontractor_vcenter_', dir='/tmp' )
+    try:
+      nfc_lease = vm.ExportVm()
+      lease = ExportLease( nfc_lease )
+      lease.start_wait()
+
+      try:
+        lease.start()
+        ovf_files = self._downloadFiles( wrk_dir, lease, headers )
+        logging.debug( 'OVAExportHandler: File download(s) complete' )
+        lease.complete()
+
+      except Exception as e:
+        logging.error( 'OVAExportHandler: Exception downloading files' )
+        lease.abort( vmodl.fault.SystemError( reason=str( e ) ) )
+        raise e
+
+      finally:
+        lease.stop()
+
+      logging.debug( 'OVAExportHandler: Generating OVF...' )
+      ovf_parameters = vim.OvfManager.CreateDescriptorParams()
+      ovf_parameters.name = vm.name
+      ovf_parameters.ovfFiles = ovf_files
+      vm_descriptor_result = self.ovf_manager.CreateDescriptor( obj=vm, cdp=ovf_parameters )
+
+      if vm_descriptor_result.error:
+        logging.error( 'vcenter: error creating ovf descriptor "{0}"'.format( vm_descriptor_result.error[0].fault ) )
+        raise Exception( 'Error createing ovf descriptor: "{0}"'.format( vm_descriptor_result.error[0].fault ) )
+
+      ovf_file = vm_descriptor_result.ovfDescriptor
+
+      ova_tarfile = tarfile.open( fileobj=ova_file, mode='w' )
+      ova_tarfile.addfile( tarfile.TarInfo( name='{0}.ovf'.format( vm.name ) ), fileobj=ovf_file )
+      for file in ovf_file:
+        ova_tarfile.addfile( tarfile.TarInfo( name=file.name ), fileobj=file )
+      ova_tarfile.close()  # TODO: the open and the close need to be better thought out, all file handles in just export, or something else to trigger the close
+
+    finally:
+      wrk_dir.cleanup()
+
+    ova_file.flush()
+    ova_file.seek( 0 )
+    file_writer( self.url, ova_file, None, self.sslContext )
+    ova_file.close()
+
+
+class VMDKHandler():
+  def __init__( self, vmdk_file, sslContext ):
+    super().__init__()
+    self.handle = file_reader( vmdk_file, None, sslContext )
 
   def upload( self, host, resource_pool, datacenter ):
     raise Exception( 'Not implemented' )
-
-    # headers = { 'Content-length': self.handle.st_size }
-    # if hasattr( ssl, '_create_unverified_context' ):
-    #   sslContext = ssl._create_unverified_context()
-    # else:
-    #   sslContext = None
-    #
-    # try:
-    #   req = request.Request( url, self.handle, headers )
-    #   request.urlopen( req, context=sslContext )
-    #
-    # except Exception as e:
-    #   logging.error( 'OVAImportHandler: Exception Uploading "{0}"'.format( e ) )
-    #   raise e

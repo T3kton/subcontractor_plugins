@@ -1,6 +1,48 @@
 import socket
 import json
+import logging
+from cinp import client
 from urllib import request, parse
+
+
+PACKRAT_API_VERSION = '2.0'
+
+
+class Packrat():
+  def __init__( self, host, username, password, proxy ):
+    self.cinp = client.CInP( host, '/api/v2/', proxy )
+
+    root = self.cinp.describe( '/api/v2/' )
+    if root[ 'api-version' ] != PACKRAT_API_VERSION:
+      raise Exception( 'Expected API version "{0}" found "{1}"'.format( PACKRAT_API_VERSION, root[ 'api-version' ] ) )
+
+    self.token = self.cinp.call( '/api/v2/Auth/User(login)', { 'username': username, 'password': password } )
+    self.cinp.setAuth( username, self.token )
+
+  def addPackageFile( self, file_uri, justification, provenance, type, distroversion ):
+    distroversion_list = self.cinp.call( '/api/v2/Package/PackageFile(distroversionOptions)', { 'file': file_uri } )
+    if distroversion is not None:
+      if distroversion not in distroversion_list:
+        raise Exception( 'distroversion "{0}" not in aviable distroverison list "{1}"'.format( distroversion, distroversion_list ) )
+
+    else:
+      if len( distroversion_list ) != 1:
+        raise Exception( 'Unable to auto-detect distroversion, options: "{0}"'.format( distroversion_list ) )
+      else:
+        distroversion = distroversion_list[0]
+
+    logging.info( 'Packrat: Adding file "{0}", justification: "{1}", provenance: "{2}", '
+                  'distroversion: "{3}", type: "{4}"'.format( file_uri, justification, provenance, distroversion, type ) )
+
+    result = self.cinp.call( '/api/v2/Package/PackageFile(create)',
+                             {
+                                 'file': file_uri,
+                                 'justification': justification,
+                                 'provenance': provenance,
+                                 'distroversion': distroversion,
+                                 'type': type
+                             }, timeout=300 )  # it can sometimes take a while for packrat to commit large files, thus the long timeout
+    return result
 
 
 # TODO: study the way the proxy handler works and make this act more like that, we are carying way to much old baggage here
