@@ -477,7 +477,6 @@ def _create_from_template( si, vm_name, data_center, resource_pool, folder, host
 
 def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
   logging.info( 'vcenter: creating from OVA("{0}") "{1}"'.format( vm_paramaters[ 'ova' ], vm_name ) )
-  super().__init__()
   if hasattr( ssl, '_create_unverified_context' ):
     sslContext = ssl._create_unverified_context()
   else:
@@ -519,11 +518,12 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
 
   result = ovf_manager.CreateImportSpec( handler.descriptor, resource_pool, datastore, cisp )
 
-  for property in result.importSpec.configSpec.vAppConfig.property:
-    info = property.info
-    if info.id in vm_paramaters[ 'property_map' ] and not info.userConfigurable:
-      logging.warning( 'Setting non user configurable "{0}" to configurable'.format( info.id ) )
-      info.userConfigurable = True
+  if result.importSpec is not None and result.importSpec.configSpec.vAppConfig is not None:
+    for property in result.importSpec.configSpec.vAppConfig.property:
+      info = property.info
+      if info.id in vm_paramaters[ 'property_map' ] and not info.userConfigurable:
+        logging.warning( 'Setting non user configurable "{0}" to configurable'.format( info.id ) )
+        info.userConfigurable = True
 
   if len( result.warning ):
     logging.warning( 'vcenter: Warning with OVA Import Spec: "{0}"'.format( result.warning ) )
@@ -946,7 +946,9 @@ def export( paramaters ):
   try:
     handler = OVAExportHandler( si.content.ovfManager, url, sslContext )
     vm = _getVM( si, vm_uuid )
-    handler.export( vm, vm_name )
+    handler.export( paramaters[ 'connection' ][ 'host' ], vm, vm_name )
+
+    return {}
 
   finally:
     _disconnect( si )

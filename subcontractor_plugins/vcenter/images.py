@@ -3,7 +3,10 @@ import tarfile
 import logging
 import time
 import os
+import io
 import tempfile
+import http
+import hashlib
 from threading import Timer
 from datetime import datetime, timedelta
 
@@ -13,10 +16,11 @@ from pyVmomi import vim, vmodl
 from subcontractor_plugins.common.files import file_reader, file_writer
 
 """
-Derived from code from https://github.com/vmware/pyvmomi-community-samples/blob/master/samples/deploy_ova.py and deploy_ovf.py
+Initially derived from code from https://github.com/vmware/pyvmomi-community-samples/blob/master/samples/deploy_ova.py and deploy_ovf.py
 """
 
 PROGRESS_INTERVAL = 10  # in seconds
+DOWNLOAD_FILE_TIMEOUT = 60  # in seconds
 
 
 def _get_tarfile_size( tarfile ):
@@ -86,11 +90,11 @@ class ImportLease( Lease ):
     self.file_size = os.stat( file_handle.name ).st_size
 
   def get_device_url( self, fileItem ):
-    for deviceUrl in self.lease.info.deviceUrl:
-      if deviceUrl.importKey == fileItem.deviceId:
-        return deviceUrl
+    for device in self.lease.info.deviceUrl:
+      if device.importKey == fileItem.deviceId:
+        return device
 
-    raise Exception( 'Failed to find deviceUrl for file {0}'.format( fileItem.path ) )
+    raise Exception( 'Failed to find device.url for file {0}'.format( fileItem.path ) )
 
   def _timer_cb( self ):
     if not self.cont:
@@ -99,8 +103,8 @@ class ImportLease( Lease ):
     try:
       cur_pos = self.file_handle.tell()
       prog = cur_pos * 100 / self.file_size  # interestingly the progres is the offset position in the file, not how much has been uploaded, so if the vmdks are uploaded out of order, the progress is going to jump arround
-      self.lease.Progress( prog )
-      logging.debug( 'Lease: import progress at "{0}"%'.format( prog ) )
+      self.lease.Progress( int( prog ) )
+      logging.debug( 'Lease: import progress at {0}%'.format( prog ) )
       if self.lease.state == vim.HttpNfcLease.State.ready:
         Timer( PROGRESS_INTERVAL, self._timer_cb ).start()
 
@@ -122,8 +126,8 @@ class ExportLease( Lease ):
       return
 
     try:
-      self.lease.Progress( self.progress  )
-      logging.debug( 'ExportLease: export progress at "{0}"%'.format( self.progress  ) )
+      self.lease.Progress( int( self.progress )  )
+      logging.debug( 'ExportLease: export progress at {0}%'.format( self.progress  ) )
       if self.lease.state == vim.HttpNfcLease.State.ready:
         Timer( PROGRESS_INTERVAL, self._timer_cb ).start()
 
@@ -170,8 +174,8 @@ class OVAImportHandler():
     if file is None:
         return
 
-    deviceUrl = lease.get_device_url( fileItem )
-    url = deviceUrl.url.replace( '*', host )
+    device = lease.get_device_url( fileItem )
+    url = device.url.replace( '*', host )
     headers = { 'Content-length': _get_tarfile_size( file ) }
     if hasattr( ssl, '_create_unverified_context' ):
       sslContext = ssl._create_unverified_context()
@@ -223,43 +227,62 @@ class OVAExportHandler():
     self.url = url
     self.sslContext = sslContext
 
-  def _downloadFiles( self, wrk_dir, lease, headers ):
+  def _downloadFiles( self, wrk_dir, lease, host, header_map, proxy ):
     ovf_files = []
 
+    opener = request.OpenerDirector()
+    if proxy:  # not doing 'is not None', so empty strings don't try and proxy   # have a proxy option to take it from the envrionment vars
+      opener.add_handler( request.ProxyHandler( { 'http': proxy, 'https': proxy } ) )
+    else:
+      opener.add_handler( request.ProxyHandler( {} ) )
+    opener.add_handler( request.HTTPHandler() )
+    if hasattr( http.client, 'HTTPSConnection' ):
+      opener.add_handler( request.HTTPSHandler() )  # context=self.sslContext
+
+    opener.add_handler( request.UnknownHandler() )
+
     logging.debug( 'OVAExportHandler: Starting file downloads(s)...' )
-    for device in self.lease.info.deviceUrl:
+    for device in lease.info.deviceUrl:
+      url = device.url.replace( '*', host )
       if not device.targetId:
-        logging.debug( 'ExportLease: No targetId for "{0}", skipping...'.format( device.url ) )
+        logging.debug( 'ExportLease: No targetId for "{0}", skipping...'.format( url ) )
         continue
 
       logging.debug( 'OVAExportHandler: Downloading "{0}"...'.format( device.url ) )
-      req = request.Request( device.url, headers=headers, method='GET' )
-      resp = request.urlopen( req, context=self.sslContext )
-      size = int( resp.headers[ 'content-length' ] )
+      req = request.Request( url, headers=header_map, method='GET' )
+      resp = opener.open( req, timeout=DOWNLOAD_FILE_TIMEOUT )
+      try:
+        content_length = int( resp.headers[ 'content-length' ] )
+      except TypeError:  # ESX dosen't supply contect-length?
+        content_length = '<unknwon>'
+
+      file_hash = hashlib.sha256()
       local_file = open( os.path.join( wrk_dir, device.targetId ), 'wb' )
       buff = resp.read( 4096 * 1024 )
       cp = datetime.utcnow()
       while buff:
         if datetime.utcnow() > cp:
           cp = datetime.utcnow() + timedelta( seconds=PROGRESS_INTERVAL )
-          logging.debug( 'OVAExportHandler: download at {0} of {1}'.format( local_file.tell(), size ) )
+          logging.debug( 'OVAExportHandler: download at {0} of {1}'.format( local_file.tell(), content_length ) )
 
         local_file.write( buff )
+        file_hash.update( buff )
         buff = resp.read( 4096 * 1024 )
 
       ovf_file = vim.OvfManager.OvfFile()
       ovf_file.deviceId = device.key
       ovf_file.path = device.targetId
-      ovf_file.size = local_file.size
-      ovf_files.append( ovf_file )
+      ovf_file.size = local_file.tell()
+      ovf_files.append( ( ovf_file, file_hash.hexdigest() ) )
 
       local_file.close()
 
     return ovf_files
 
-  def export( self, vm, vm_name ):
+  def export( self, host, vm, vm_name ):
     headers = {}
-    ova_file = tempfile.NamedTemporaryFile( mode='wb', dir='/tmp', prefix='subcontractor_vcenter_', delete=False )
+    proxy = None
+    ova_file = tempfile.NamedTemporaryFile( mode='w+b', dir='/tmp', prefix='subcontractor_vcenter_' )
     wrk_dir = tempfile.TemporaryDirectory( prefix='subcontractor_vcenter_', dir='/tmp' )
     try:
       nfc_lease = vm.ExportVm()
@@ -268,7 +291,7 @@ class OVAExportHandler():
 
       try:
         lease.start()
-        ovf_files = self._downloadFiles( wrk_dir, lease, headers )
+        ovf_file_list = self._downloadFiles( wrk_dir.name, lease, host, headers, proxy )
         logging.debug( 'OVAExportHandler: File download(s) complete' )
         lease.complete()
 
@@ -282,28 +305,48 @@ class OVAExportHandler():
 
       logging.debug( 'OVAExportHandler: Generating OVF...' )
       ovf_parameters = vim.OvfManager.CreateDescriptorParams()
-      ovf_parameters.name = vm.name
-      ovf_parameters.ovfFiles = ovf_files
-      vm_descriptor_result = self.ovf_manager.CreateDescriptor( obj=vm, cdp=ovf_parameters )
+      ovf_parameters.name = vm_name
+      ovf_parameters.ovfFiles = [ i[0] for i in ovf_file_list ]
+      ovf_descriptor = self.ovf_manager.CreateDescriptor( obj=vm, cdp=ovf_parameters )
 
-      if vm_descriptor_result.error:
-        logging.error( 'vcenter: error creating ovf descriptor "{0}"'.format( vm_descriptor_result.error[0].fault ) )
-        raise Exception( 'Error createing ovf descriptor: "{0}"'.format( vm_descriptor_result.error[0].fault ) )
+      if ovf_descriptor.error:
+        msg = '"{0}"'.format( '", "'.join( [ i.fault for i in ovf_descriptor.error ] ) )
+        logging.error( 'vcenter: error creating ovf descriptor ' + msg )
+        raise Exception( 'Error createing ovf descriptor: ' + msg )
 
-      ovf_file = vm_descriptor_result.ovfDescriptor
+      if ovf_descriptor.warning:
+        msg = '"{0}"'.format( '", "'.join( [ i.fault for i in ovf_descriptor.warning ] ) )
+        logging.warning( 'vcenter: warning creating ovf descriptor ' + msg )
 
       ova_tarfile = tarfile.open( fileobj=ova_file, mode='w' )
-      ova_tarfile.addfile( tarfile.TarInfo( name='{0}.ovf'.format( vm.name ) ), fileobj=ovf_file )
-      for file in ovf_file:
-        ova_tarfile.addfile( tarfile.TarInfo( name=file.name ), fileobj=file )
-      ova_tarfile.close()  # TODO: the open and the close need to be better thought out, all file handles in just export, or something else to trigger the close
+      ovf_file = tarfile.TarInfo( name='{0}.ovf'.format( vm_name ) )
+      bytes = ovf_descriptor.ovfDescriptor.encode( 'utf-8' )
+      ovf_file.size = len( bytes )
+      ova_tarfile.addfile( ovf_file, fileobj=io.BytesIO( bytes ) )
+      ovf_hash = hashlib.sha256( bytes ).hexdigest()
+
+      logging.debug( 'OVAExportHandler: Generating mf...' )
+      mf = 'SHA256({0}.ovf)={1}\n'.format( vm_name, ovf_hash )
+      for item, hash in ovf_file_list:
+        mf += 'SHA256({0})={1}\n'.format( item.path, hash )
+      mf_file = tarfile.TarInfo( name='{0}.mf'.format( vm_name ) )
+      bytes = mf.encode( 'utf-8' )
+      mf_file.size = len( bytes )
+      ova_tarfile.addfile( mf_file, fileobj=io.BytesIO( bytes ) )
+
+      for item, _ in ovf_file_list:
+        logging.debug( 'OVAExportHandler: adding "{0}"...'.format( item.path ) )
+        item_file = tarfile.TarInfo( name=item.path )
+        item_file.size = item.size
+        ova_tarfile.addfile( item_file, fileobj=open( os.path.join( wrk_dir.name, item.path ), 'rb' ) )
+      ova_tarfile.close()
 
     finally:
       wrk_dir.cleanup()
 
     ova_file.flush()
     ova_file.seek( 0 )
-    file_writer( self.url, ova_file, None, self.sslContext )
+    file_writer( self.url, ova_file, '{0}.ova'.format( vm_name ), None, self.sslContext )
     ova_file.close()
 
 

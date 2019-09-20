@@ -72,20 +72,21 @@ class PackratHandler( request.BaseHandler ):
     self.opener.addheaders = [ ( 'User-agent', 'subcontractor_plugin' ) ]
 
   def packrat_open( self, req ):
-    return self._open( req, False )
+    return self._open( req, False, None )
 
-  def _open( self, req, ssl ):
+  def _open( self, req, ssl, sslContext ):
     if not req.host:
       raise request.URLError( 'packrat error: no host given' )
 
-    if req.method == 'GET':
-      return self._open_get( req, ssl )
-    elif req.method == 'POST':
-      return self._open_post( req, ssl )
+    method = getattr( req, 'method', 'GET' )
+    if method == 'GET':
+      return self._open_get( req, ssl, sslContext )
+    elif method == 'POST':
+      return self._open_post( req, ssl, sslContext )
     else:
-      raise ValueError( 'Invalid Method "{0}"'.format( req.method ) )
+      raise ValueError( 'Invalid Method "{0}"'.format( method ) )
 
-  def _open_get( self, req, ssl ):
+  def _open_get( self, req, ssl, sslContext ):
     header_map = {}
     package, version = parse.splitquery( req.selector )
     try:
@@ -113,19 +114,17 @@ class PackratHandler( request.BaseHandler ):
     else:
       url = 'http://{0}/{1}/{2}'.format( req.host, repo, entry[ 'path' ] )
 
-    return self.opener.open( url, timeout=req.timeout, headers=header_map, method='GET' )
+    return self.opener.open( request.Request( url, headers=header_map, method='GET' ), timeout=req.timeout )
 
-  def _open_post( self, req, ssl ):
-    header_map = {
-                    'Content-Type': 'application/octet-stream'
-                  }
+  def _open_post( self, req, ssl, sslContext ):
+    header_map = req.headers
 
     if ssl:
       url = 'https://{0}/api/upload'.format( req.host )
     else:
       url = 'http://{0}/api/upload'.format( req.host )
 
-    return self.opener.open( url, timeout=req.timeout, headers=header_map, method='POST' )
+    return self.opener.open( request.Request( url, data=req.data, headers=header_map, method='POST' ), timeout=req.timeout )
 
   def _request( self, host, repo, file, timeout ):
     url = 'http://{0}/{1}/{2}'.format( host, repo, file )
@@ -171,5 +170,5 @@ class PackratHandler( request.BaseHandler ):
 
 
 class PackratsHandler( PackratHandler ):
-  def packrats_open( self, req ):
-    return self._open( req, True )
+  def packrats_open( self, req, context=None ):
+    return self._open( req, True, context )
