@@ -49,12 +49,14 @@ class IPMIClient():
     self.username = creds[ 'username' ]
     self.password = creds[ 'password' ]
 
-  def _doCmd( self, cmd ):
+  def _doCmd( self, cmd, retry_count ):
     cmd = [ IPMITOOL_CMD, '-I', 'lanplus', '-H', self.ip_address, '-U', self.username, '-P', self.password, 'chassis', 'power', cmd ]
+    debug_cmd = cmd.copy()
+    debug_cmd[8] = '<password>'
 
-    for _ in range( 0, IPMI_CMD_MAX_RETRY ):
-      logging.debug( 'IPMI: calling "{0}"'.format( cmd ) )
-      proc = subprocess.run( cmd, shell=False, stdin=subprocess.PIPE, stdout=subprocess.STDOUT )
+    for retry in range( 0, retry_count ):
+      logging.debug( 'IPMI: calling "{0}" try "{1}" of "{2}"'.format( debug_cmd, ( retry + 1 ), retry_count ) )
+      proc = subprocess.run( cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT )
       lines = str( proc.stdout, 'utf-8' ).strip().splitlines()
 
       if proc.returncode == 0:
@@ -64,25 +66,22 @@ class IPMIClient():
         logging.error( 'IPMI: Unknown or Non-Ignorable error "{0}", rc: "{1}"'.format( lines, proc.returncode ) )
         return 'error'
 
-      logging.warning( 'IPMI: got ignorable error "{0}", rc: "{1}"', format( lines, proc.returncode ) )
+      logging.warning( 'IPMI: got ignorable error "{0}", rc: "{1}"'.format( lines, proc.returncode ) )
       time.sleep( IPMI_CMD_RETRY_DELAY )
 
     logging.warning( 'IPMI: Max retries, bailing' )
     return 'error'
 
-  def getPower( self ):
-    result = self._doCmd( 'status' )
-
-    if result is None:
-      return 'error'
+  def getPower( self, retry_count ):
+    result = self._doCmd( 'status', retry_count )
 
     return result.split()[ -1 ]
 
-  def setPower( self, state ):
+  def setPower( self, state, retry_count ):
     if state not in ( 'on', 'off', 'shutdown', 'cycle', 'reset' ):
       raise ValueError( 'Unknown power state "{0}"'.format( state ) )
 
-    self._doCmd( state )
+    self._doCmd( state, retry_count )
 
 
 def link_test( paramaters ):
@@ -96,7 +95,8 @@ def link_test( paramaters ):
   client = IPMIClient( connection_paramaters )
 
   for count in range( 0, paramaters[ 'count' ] ):
-    score = score * scaler + ( scaler - 1 ) * ( 1 if client.getPower() == 'error' else 0 )
+    score = score * scaler + ( 1 - scaler ) * ( 0 if client.getPower( 1 ) == 'error' else 1 )
+    logging.debug( 'IPMI: link test score: "{0}"'.format( score ) )
 
     if score < threshold:
       return { 'score': score }
@@ -113,7 +113,7 @@ def set_power( paramaters ):
   logging.info( 'IPMI: setting power state of "{0}" to "{1}"...'.format( connection_paramaters[ 'ip_address' ], desired_state ) )
   client = IPMIClient( connection_paramaters )
 
-  curent_state = client.getPower()
+  curent_state = client.getPower( IPMI_CMD_MAX_RETRY )
 
   if curent_state == desired_state or ( curent_state == 'off' and desired_state == 'soft_off' ):
     return { 'state': curent_state }
@@ -121,11 +121,11 @@ def set_power( paramaters ):
   if desired_state == 'soft_off':
     desired_state = 'shutdown'
 
-  client.setPower( desired_state )  # TODO: do we want to do something if there is an error here?  the next call to getPower should pick up anything
+  client.setPower( desired_state, IPMI_CMD_MAX_RETRY )  # TODO: do we want to do something if there is an error here?  the next call to getPower should pick up anything
 
   time.sleep( 1 )
 
-  curent_state = client.getPower()
+  curent_state = client.getPower( IPMI_CMD_MAX_RETRY )
   logging.info( 'IPMI: setting power state of "{0}" to "{1}" complete'.format( connection_paramaters[ 'ip_address' ], desired_state ) )
   return { 'state': curent_state }
 
@@ -137,5 +137,5 @@ def power_state( paramaters ):
 
   client = IPMIClient( connection_paramaters )
 
-  curent_state = client.getPower()
+  curent_state = client.getPower( IPMI_CMD_MAX_RETRY )
   return { 'state': curent_state }
