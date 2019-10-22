@@ -349,6 +349,8 @@ class OVAExportHandler():
     file_writer( self.url, ova_file, '{0}.ova'.format( vm_name ), None, self.sslContext )
     ova_file.close()
 
+    return 'http://somplace/somepath/{0}.ova'.format( vm_name )
+
 
 class VMDKHandler():
   def __init__( self, vmdk_file, sslContext ):

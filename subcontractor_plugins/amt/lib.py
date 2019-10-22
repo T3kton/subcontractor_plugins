@@ -19,10 +19,11 @@ class AWTClient():
     if isinstance( creds, str ):
       creds = getCredentials( creds )
 
+    self.username = creds[ 'username' ]
     self.password = creds[ 'password' ]
 
   def connect( self ):
-    self._conn = Client( self.ip_address, self.password )
+    self._conn = Client( self.ip_address, self.password, self.username )
 
   def disconnect( self ):
     pass

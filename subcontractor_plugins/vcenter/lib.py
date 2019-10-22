@@ -946,9 +946,9 @@ def export( paramaters ):
   try:
     handler = OVAExportHandler( si.content.ovfManager, url, sslContext )
     vm = _getVM( si, vm_uuid )
-    handler.export( paramaters[ 'connection' ][ 'host' ], vm, vm_name )
+    location = handler.export( paramaters[ 'connection' ][ 'host' ], vm, vm_name )
 
-    return {}
+    return { 'location': location }
 
   finally:
     _disconnect( si )
