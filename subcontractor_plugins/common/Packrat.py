@@ -1,11 +1,55 @@
 import socket
 import json
+import logging
+from cinp import client
 from urllib import request, parse
+
+
+PACKRAT_API_VERSION = '2.0'
+
+
+class Packrat():
+  def __init__( self, host, username, password, proxy ):
+    self.cinp = client.CInP( host, '/api/v2/', proxy )
+
+    root = self.cinp.describe( '/api/v2/' )
+    if root[ 'api-version' ] != PACKRAT_API_VERSION:
+      raise Exception( 'Expected API version "{0}" found "{1}"'.format( PACKRAT_API_VERSION, root[ 'api-version' ] ) )
+
+    self.token = self.cinp.call( '/api/v2/Auth/User(login)', { 'username': username, 'password': password } )
+    self.cinp.setAuth( username, self.token )
+
+  def addPackageFile( self, file_uri, justification, provenance, type, distroversion ):
+    distroversion_list = self.cinp.call( '/api/v2/Package/PackageFile(distroversionOptions)', { 'file': file_uri } )
+    if distroversion is not None:
+      if distroversion not in distroversion_list:
+        raise Exception( 'distroversion "{0}" not in aviable distroverison list "{1}"'.format( distroversion, distroversion_list ) )
+
+    else:
+      if len( distroversion_list ) != 1:
+        raise Exception( 'Unable to auto-detect distroversion, options: "{0}"'.format( distroversion_list ) )
+      else:
+        distroversion = distroversion_list[0]
+
+    logging.info( 'Packrat: Adding file "{0}", justification: "{1}", provenance: "{2}", '
+                  'distroversion: "{3}", type: "{4}"'.format( file_uri, justification, provenance, distroversion, type ) )
+
+    result = self.cinp.call( '/api/v2/Package/PackageFile(create)',
+                             {
+                                 'file': file_uri,
+                                 'justification': justification,
+                                 'provenance': provenance,
+                                 'distroversion': distroversion,
+                                 'type': type
+                             }, timeout=300 )  # it can sometimes take a while for packrat to commit large files, thus the long timeout
+    return result
 
 
 # TODO: study the way the proxy handler works and make this act more like that, we are carying way to much old baggage here
 # schema:   packrat(s)://host/repo/type/package[?version]  if version is omitted, then the latest version
 class PackratHandler( request.BaseHandler ):
+  handler_order = 500  # same as regular http handler, mabey just before?
+
   def __init__( self, check_hash=True, gpg_key_file=None ):
     super().__init__()
     self.timeout = socket._GLOBAL_DEFAULT_TIMEOUT
@@ -28,12 +72,22 @@ class PackratHandler( request.BaseHandler ):
     self.opener.addheaders = [ ( 'User-agent', 'subcontractor_plugin' ) ]
 
   def packrat_open( self, req ):
-    return self._open( req, False )
+    return self._open( req, False, None )
 
-  def _open( self, req, ssl ):
+  def _open( self, req, ssl, sslContext ):
     if not req.host:
       raise request.URLError( 'packrat error: no host given' )
 
+    method = getattr( req, 'method', 'GET' )
+    if method == 'GET':
+      return self._open_get( req, ssl, sslContext )
+    elif method == 'POST':
+      return self._open_post( req, ssl, sslContext )
+    else:
+      raise ValueError( 'Invalid Method "{0}"'.format( method ) )
+
+  def _open_get( self, req, ssl, sslContext ):
+    header_map = {}
     package, version = parse.splitquery( req.selector )
     try:
       _, repo, file_type, package = package.split( '/' )
@@ -60,7 +114,17 @@ class PackratHandler( request.BaseHandler ):
     else:
       url = 'http://{0}/{1}/{2}'.format( req.host, repo, entry[ 'path' ] )
 
-    return self.opener.open( url, timeout=req.timeout )
+    return self.opener.open( request.Request( url, headers=header_map, method='GET' ), timeout=req.timeout )
+
+  def _open_post( self, req, ssl, sslContext ):
+    header_map = req.headers
+
+    if ssl:
+      url = 'https://{0}/api/upload'.format( req.host )
+    else:
+      url = 'http://{0}/api/upload'.format( req.host )
+
+    return self.opener.open( request.Request( url, data=req.data, headers=header_map, method='POST' ), timeout=req.timeout )
 
   def _request( self, host, repo, file, timeout ):
     url = 'http://{0}/{1}/{2}'.format( host, repo, file )
@@ -106,5 +170,5 @@ class PackratHandler( request.BaseHandler ):
 
 
 class PackratsHandler( PackratHandler ):
-  def packrats_open( self, req ):
-    return self._open( req, True )
+  def packrats_open( self, req, context=None ):
+    return self._open( req, True, context )

@@ -2,13 +2,14 @@ import logging
 import time
 import re
 import random
+import ssl
 from datetime import datetime, timedelta
 
 from pyVim import connect
 from pyVmomi import vim
 
 from subcontractor.credentials import getCredentials
-from subcontractor_plugins.vcenter.images import OVAHandler
+from subcontractor_plugins.vcenter.images import OVAImportHandler, OVAExportHandler
 
 POLL_INTERVAL = 4
 BOOT_ORDER_MAP = {
@@ -33,7 +34,6 @@ class MOBNotFound( Exception ):
 
 def _connect( connection_paramaters ):
   # work arround invalid SSL
-  import ssl
   _create_unverified_https_context = ssl._create_unverified_context
   ssl._create_default_https_context = _create_unverified_https_context
   # TODO: flag for trusting SSL of connection, also there is a paramater to Connect for verified SSL
@@ -230,10 +230,13 @@ def datastore_list( paramaters ):
   connection_paramaters = paramaters[ 'connection' ]
   logging.info( 'vcenter: getting Datastore List for dc: "{0}" rp: "{1}" host: "{2}"'.format( paramaters[ 'datacenter' ], paramaters[ 'cluster' ], paramaters[ 'host' ] ) )
   paramaters[ 'min_free_space' ] = paramaters[ 'min_free_space' ]
-  try:
-    paramaters[ 'name_regex' ] = re.compile( paramaters[ 'name_regex' ] )
-  except TypeError:
-    pass
+  if paramaters.get( 'name_regex', None ):  # could also be ''
+    try:
+      paramaters[ 'name_regex' ] = re.compile( paramaters[ 'name_regex' ] )
+    except TypeError:
+      paramaters[ 'name_regex' ] = None
+  else:
+    paramaters[ 'name_regex' ] = None
 
   si = _connect( connection_paramaters )
   try:
@@ -474,9 +477,14 @@ def _create_from_template( si, vm_name, data_center, resource_pool, folder, host
 
 def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
   logging.info( 'vcenter: creating from OVA("{0}") "{1}"'.format( vm_paramaters[ 'ova' ], vm_name ) )
-  handler = OVAHandler( vm_paramaters[ 'ova' ] )
+  if hasattr( ssl, '_create_unverified_context' ):
+    sslContext = ssl._create_unverified_context()
+  else:
+    sslContext = None
 
-  ovfManager = si.content.ovfManager
+  handler = OVAImportHandler( vm_paramaters[ 'ova' ], sslContext )
+
+  ovf_manager = si.content.ovfManager
 
   network_mapping = []
   for interface in vm_paramaters[ 'interface_list' ]:
@@ -508,13 +516,14 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
 
   logging.debug( 'vcenter: Import Spec Params: "{0}"'.format( cisp ) )
 
-  result = ovfManager.CreateImportSpec( handler.descriptor, resource_pool, datastore, cisp )
+  result = ovf_manager.CreateImportSpec( handler.descriptor, resource_pool, datastore, cisp )
 
-  for property in result.importSpec.configSpec.vAppConfig.property:
-    info = property.info
-    if info.id in vm_paramaters[ 'property_map' ] and not info.userConfigurable:
-      logging.warning( 'Setting non user configurable "{0}" to configurable'.format( info.id ) )
-      info.userConfigurable = True
+  if result.importSpec is not None and result.importSpec.configSpec.vAppConfig is not None:
+    for property in result.importSpec.configSpec.vAppConfig.property:
+      info = property.info
+      if info.id in vm_paramaters[ 'property_map' ] and not info.userConfigurable:
+        logging.warning( 'Setting non user configurable "{0}" to configurable'.format( info.id ) )
+        info.userConfigurable = True
 
   if len( result.warning ):
     logging.warning( 'vcenter: Warning with OVA Import Spec: "{0}"'.format( result.warning ) )
@@ -617,6 +626,9 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
     configSpec.flags.virtualMmuUsage = 'off'
   elif vmu == 'auto':
     configSpec.flags.virtualMmuUsage = 'automatic'
+
+  if vm_paramaters.get( 'virtual_vhv', False ):
+    configSpec.nestedHVEnabled = True
 
   property_map = vm_paramaters.get( 'property_map', None )
   if property_map is not None:
@@ -861,7 +873,7 @@ def execute( paramaters ):
     vm = _getVM( si, vm_uuid )
 
     if vm.guest.toolsStatus in ( 'toolsNotInstalled', 'toolsNotRunning' ):
-      raise Exception( 'VMwareTools is not installed or not Running')
+      return { 'error': 'VMwareTools is not installed or not Running' }
 
     pManager = si.content.guestOperationsManager.processManager
 
@@ -887,6 +899,56 @@ def execute( paramaters ):
         raise Exception( 'timeout waiting for command to finish' )
 
     return { 'rc': pList[0].exitCode }
+
+  finally:
+    _disconnect( si )
+
+
+def mark_as_template( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
+  vm_uuid = paramaters[ 'uuid' ]
+  vm_name = paramaters[ 'name' ]
+  as_template = paramaters[ 'as_template' ]
+
+  logging.info( 'vcenter: mark_as_template "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, as_template ) )
+  si = _connect( connection_paramaters )
+  try:
+    if si.content.about.productLineId == 'embeddedEsx':  # mark as template not supported on ESX
+      return {}
+
+    vm = _getVM( si, vm_uuid )
+
+    if as_template:
+      vm.MarkAsTemplate()
+    else:
+      vm.MarkAsVirtualMachine()
+
+    return {}
+
+  finally:
+    _disconnect( si )
+
+
+def export( paramaters ):
+  connection_paramaters = paramaters[ 'connection' ]
+  vm_uuid = paramaters[ 'uuid' ]
+  vm_name = paramaters[ 'name' ]
+  url = paramaters[ 'url' ]
+
+  if hasattr( ssl, '_create_unverified_context' ):
+    sslContext = ssl._create_unverified_context()
+  else:
+    sslContext = None
+
+  logging.info( 'vcenter: exporting "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, url ) )
+
+  si = _connect( connection_paramaters )
+  try:
+    handler = OVAExportHandler( si.content.ovfManager, url, sslContext )
+    vm = _getVM( si, vm_uuid )
+    location = handler.export( paramaters[ 'connection' ][ 'host' ], vm, vm_name )
+
+    return { 'location': location }
 
   finally:
     _disconnect( si )
