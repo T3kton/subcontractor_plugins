@@ -5,7 +5,7 @@ from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.compute import ComputeManagementClient
 from msrestazure.azure_exceptions import CloudError
 
-from subcontractor.credentials import getCredential
+from subcontractor.credentials import getCredentials
 
 
 POLL_INTERVAL = 4
@@ -46,7 +46,7 @@ class AzureClient():
 
 def _connect( connection_paramaters ):
   logging.debug( 'azure: connecting with client_id "{0}", tenant_id: "{1}"'.format( connection_paramaters[ 'client_id' ], connection_paramaters[ 'tenant_id' ] ) )
-  password = getCredential( connection_paramaters[ 'password' ] )
+  password = getCredentials( connection_paramaters[ 'password' ] )
 
   credentials = ServicePrincipalCredentials( client_id=connection_paramaters[ 'client_id' ], secret=password, tenant=connection_paramaters[ 'tenant_id' ] )
 

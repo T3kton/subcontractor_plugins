@@ -2,7 +2,7 @@ import logging
 import paramiko
 from datetime import datetime, timedelta
 
-from subcontractor.credentials import getCredential
+from subcontractor.credentials import getCredentials
 from subcontractor_plugins.common.files import file_reader
 
 
@@ -14,7 +14,7 @@ def _connect( paramaters ):
   client = paramiko.SSHClient()
   client.set_missing_host_key_policy( paramiko.AutoAddPolicy() )
 
-  password = getCredential( paramaters.get( 'password', None ) )
+  password = getCredentials( paramaters.get( 'password', None ) )
   kwargs = {
              'hostname': paramaters[ 'host' ],
              'username': paramaters.get( 'username', None ),

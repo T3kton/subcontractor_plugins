@@ -3,7 +3,7 @@ import time
 import os
 import random
 
-from subcontractor.credentials import getCredential
+from subcontractor.credentials import getCredentials
 from subcontractor_plugins.virtualbox import constants
 from subcontractor_plugins.virtualbox.client import VirtualBox, VirtualBoxNotFound
 
@@ -17,7 +17,7 @@ BOOT_ORDER_MAP = { 'hdd': constants.DeviceType.HardDisk, 'net': constants.Device
 def _connect( paramaters ):
   logging.debug( 'virtualbox: connecting to "{0}" with user "{1}"'.format( paramaters[ 'host' ], paramaters[ 'username' ] ) )
 
-  password = getCredential( paramaters[ 'password' ] )
+  password = getCredentials( paramaters[ 'password' ] )
 
   return VirtualBox( 'http://{0}:18083/'.format( paramaters[ 'host' ] ), paramaters[ 'username' ], password )
 
