@@ -14,12 +14,14 @@ CREATE_FLAGS = ''
 BOOT_ORDER_MAP = { 'hdd': constants.DeviceType.HardDisk, 'net': constants.DeviceType.Network, 'cd': constants.DeviceType.DVD, 'usb': constants.DeviceType.USB }
 
 
-def _connect( paramaters ):
-  logging.debug( 'virtualbox: connecting to "{0}" with user "{1}"'.format( paramaters[ 'host' ], paramaters[ 'username' ] ) )
+def _connect( connection_paramaters ):
+  creds = connection_paramaters[ 'credentials' ]
+  if isinstance( creds, str ):
+    creds = getCredentials( creds )
 
-  password = getCredentials( paramaters[ 'password' ] )
+  logging.debug( 'virtualbox: connecting to "{0}" with user "{1}"'.format( connection_paramaters[ 'host' ], creds[ 'username' ] ) )
 
-  return VirtualBox( 'http://{0}:18083/'.format( paramaters[ 'host' ] ), paramaters[ 'username' ], password )
+  return VirtualBox( 'http://{0}:18083/'.format( connection_paramaters[ 'host' ] ), creds[ 'username' ], creds[ 'password' ] )
 
 
 def create( paramaters ):
