@@ -167,6 +167,9 @@ def host_list( paramaters ):
 
     host_map = {}
     for host in resourcePool.owner.host:
+      if host.summary.quickStats.overallMemoryUsage is None:  # sometimes the quickstats don't get updated, for now skip that host
+        continue
+
       total_memory = host.summary.hardware.memorySize / 1024.0 / 1024.0
       memory_aviable = total_memory - host.summary.quickStats.overallMemoryUsage
       if memory_aviable < paramaters[ 'min_memory' ]:
