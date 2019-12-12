@@ -39,6 +39,7 @@ def create( paramaters ):
 
   settings_file = vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties[ 'default_machine_folder' ] )
   vm = vbox.create_machine( settings_file, vm_name, CREATE_GROUPS, vm_paramaters[ 'guest_type' ], CREATE_FLAGS )
+  vm.RTC_use_UTC = True
   vm.memory_size = vm_paramaters[ 'memory_size' ]  # in Meg
 
   disk_controller_name = 'SCSI'
