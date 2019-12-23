@@ -11,7 +11,6 @@ def _connect( connection_paramaters ):
 
   logging.debug( 'docker: connecting to docker at "{0}"'.format( host ) )
 
-  # return docker.Client( base_url='tcp://{0}:2376'.format( host ) )  # for older version of py-docker
   return docker.DockerClient( base_url='tcp://{0}:2376'.format( host ) )
 
 
@@ -28,9 +27,14 @@ def create( paramaters ):
     raise Exception( 'Error Creating Container: {0}'.format( str( e ) ) )
 
   container_paramaters = {
+                          'auto_remove': False,
+                          'detach': True,
+                          'remote': False,
                           'image': paramaters[ 'docker_image' ],
                           'name': container_name,
-                          'ports': paramaters[ 'port_map' ]
+                          'ports': paramaters[ 'port_map' ],
+                          'environment': paramaters[ 'environment_map' ],
+                          'command': paramaters[ 'command' ]
                          }
 
   logging.debug( 'docker: creating "{0}"'.format( container_paramaters ) )
