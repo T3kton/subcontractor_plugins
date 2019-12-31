@@ -29,7 +29,6 @@ def create( paramaters ):
   container_paramaters = {
                           'auto_remove': False,
                           'detach': True,
-                          'remote': False,
                           'image': paramaters[ 'docker_image' ],
                           'name': container_name,
                           'ports': paramaters[ 'port_map' ],
