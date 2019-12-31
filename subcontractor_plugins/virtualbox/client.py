@@ -147,6 +147,7 @@ class Machine:
   state = soap_property( 'IMachine', 'State', True )
   hardware_uuid = soap_property( 'IMachine', 'HardwareUUID' )
   settings_file_path = soap_property( 'IMachine', 'SettingsFilePath', True )
+  RTC_use_UTC = soap_property( 'IMachine', 'RTCUseUTC' )
   memory_size = soap_property( 'IMachine', 'MemorySize' )
 
   def __init__( self, service, handle ):
