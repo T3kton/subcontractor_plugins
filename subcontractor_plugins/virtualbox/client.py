@@ -3,6 +3,7 @@ import logging
 import socket
 import re
 from urllib import request
+from functools import cached_property
 
 VBOX_SOAP_BINDING = '{http://www.virtualbox.org/}vboxBinding'
 
@@ -63,17 +64,32 @@ class VirtualBox:
     except zeep.exceptions.Fault:
       raise Exception( 'Invalid Credentials' )
 
-    self.system_properties_handle = self.service.IVirtualBox_getSystemProperties( self.handle )
+    version_parts = self.service.IVirtualBox_getVersion( self.handle ).split( '.' )
+    if version_parts[0] < '7' or version_parts[1] < '1':  # need at least version 7.1
+      raise ValueError( 'Unsupported VirtualBox Version: "{0}"'.format( '.'.join( version_parts ) ) )
+
+    logging.debug( 'virtualbox: server version: "{0}"'.format( '.'.join( version_parts ) ) )
+
     self.session = Session( self.service, self.service.IWebsessionManager_getSessionObject( self.handle ) )
+    self.system_properties_handle = self.service.IVirtualBox_getSystemProperties( self.handle )
+    self.platform_properties_handle = self.service.ISystemProperties_getPlatform( self.system_properties_handle )
 
   def logout( self ):
     self.service.IWebsessionManager_logoff( self.handle )
 
-  @property
+  @cached_property
   def system_properties( self ):
     result = {}
-    for name, SOAPName in ( ( 'max_boot_position', 'MaxBootPosition' ), ( 'default_machine_folder', 'DefaultMachineFolder' ) ):
+    for name, SOAPName in ( ( 'default_machine_folder', 'DefaultMachineFolder' ), ):
       result[ name ] = getattr( self.service, 'ISystemProperties_get' + SOAPName )( self.system_properties_handle )
+
+    return result
+
+  @cached_property
+  def platform_properties( self ):
+    result = {}
+    for name, SOAPName in ( ( 'max_boot_position', 'MaxBootPosition' ), ):
+      result[ name ] = getattr( self.service, 'IPlatformProperties_get' + SOAPName )( self.platform_properties_handle )
 
     return result
 
@@ -92,8 +108,11 @@ class VirtualBox:
   def compose_machine_filename( self, name, group, create_flags, base_folder ):
     return self.service.IVirtualBox_composeMachineFilename( self.handle, name, group, create_flags, base_folder )
 
-  def create_machine( self, settings_file, name, group_list, os_type, flags ):
-    handle = self.service.IVirtualBox_createMachine( self.handle, settings_file, name, group_list, os_type, flags )
+  def create_machine( self, settings_file, name, platform, group_list, os_type, flags ):
+    cipher = ''
+    passwordid = ''
+    password = ''
+    handle = self.service.IVirtualBox_createMachine( self.handle, settings_file, name, platform, group_list, os_type, flags, cipher, passwordid, password )
     return Machine( self.service, handle )
 
   def register_machine( self, vm ):
@@ -147,7 +166,6 @@ class Machine:
   state = soap_property( 'IMachine', 'State', True )
   hardware_uuid = soap_property( 'IMachine', 'HardwareUUID' )
   settings_file_path = soap_property( 'IMachine', 'SettingsFilePath', True )
-  RTC_use_UTC = soap_property( 'IMachine', 'RTCUseUTC' )
   memory_size = soap_property( 'IMachine', 'MemorySize' )
 
   def __init__( self, service, handle ):
@@ -159,6 +177,9 @@ class Machine:
 
   def get_network_adapter( self, index ):
    return NetworkAdapter( self.service, self.service.IMachine_getNetworkAdapter( self.handle, index ) )
+
+  def get_graphics_adapter( self ):
+   return GraphicsAdapter( self.service, self.service.IMachine_getGraphicsAdapter( self.handle ) )
 
   def attach_device( self, name, port, device, device_type, medium ):
     self.service.IMachine_attachDevice( self.handle, name, port, device, device_type, medium.handle )
@@ -178,8 +199,8 @@ class Machine:
   def lock( self, session, lock_type ):
     self.service.IMachine_lockMachine( self.handle, session.handle, lock_type )
 
-  def launch_vm_process( self, session ):
-    return Progress( self.service, self.service.IMachine_launchVMProcess( self.handle, session.handle, '', '' ) )
+  def launch_vm_process( self, frontend, session ):
+    return Progress( self.service, self.service.IMachine_launchVMProcess( self.handle, session.handle, frontend, [] ) )
 
   def power_down( self, session ):
     return Progress( self.service, self.service.IConsole_powerDown( session.console ) )
@@ -212,3 +233,12 @@ class Medium:
 
   def create_base_storage( self, logical_size, variant_list ):
     return Progress( self.service, self.service.IMedium_createBaseStorage( self.handle, logical_size, variant_list ) )
+
+
+class GraphicsAdapter:
+  graphics_controller_type = soap_property( 'IGraphicsAdapter', 'GraphicsControllerType' )
+  video_memory_size = soap_property( 'IGraphicsAdapter', 'VRAMSize' )
+
+  def __init__( self, service, handle ):
+    self.service = service
+    self.handle = handle

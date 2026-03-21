@@ -13,6 +13,8 @@ CREATE_FLAGS = ''
 
 BOOT_ORDER_MAP = { 'hdd': constants.DeviceType.HardDisk, 'net': constants.DeviceType.Network, 'cd': constants.DeviceType.DVD, 'usb': constants.DeviceType.USB }
 
+FRONTEND = 'gui'  # or 'headless' or 'sdl'
+
 
 def _connect( connection_paramaters ):
   creds = connection_paramaters[ 'credentials' ]
@@ -29,6 +31,8 @@ def create( paramaters ):
   vm_paramaters = paramaters[ 'vm' ]
   vm_name = vm_paramaters[ 'name' ]
 
+  platform = 'x86'
+
   # virtualbox static mac are 08:00:27:00:00:00 -> 08:00:27:FF:FF:FF
   for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
     mac = '080027{0:06x}'.format( random.randint( 0, 16777215 ) )  # TODO: check to see if the mac is allready in use, also make them sequential
@@ -38,8 +42,7 @@ def create( paramaters ):
   vbox = _connect( connection_paramaters )
 
   settings_file = vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties[ 'default_machine_folder' ] )
-  vm = vbox.create_machine( settings_file, vm_name, CREATE_GROUPS, vm_paramaters[ 'guest_type' ], CREATE_FLAGS )
-  vm.RTC_use_UTC = True
+  vm = vbox.create_machine( settings_file, vm_name, platform, CREATE_GROUPS, vm_paramaters[ 'guest_type' ], CREATE_FLAGS )
   vm.memory_size = vm_paramaters[ 'memory_size' ]  # in MiB
 
   disk_controller_name = 'SCSI'
@@ -55,7 +58,11 @@ def create( paramaters ):
   try:
     vm2 = vbox.session.machine
 
-    for i in range( 0, vbox.system_properties[ 'max_boot_position' ] ):
+    graphics_adapter = vm2.get_graphics_adapter()
+    graphics_adapter.graphics_controller_type = constants.GraphicsControllerType.VMSVGA
+    graphics_adapter.video_memory_size = 64  # in MiB
+
+    for i in range( 0, vbox.platform_properties[ 'max_boot_position' ] ):
       vm2.set_boot_order( i + 1, constants.DeviceType.Null )
 
     for i in range( 0, 4 ):
@@ -128,7 +135,7 @@ def create( paramaters ):
       else:
         raise Exception( 'Unknown interface type "{0}"'.format( interface[ 'type' ] ) )
 
-    for i in range( 0, vbox.system_properties[ 'max_boot_position' ] ):
+    for i in range( 0, vbox.platform_properties[ 'max_boot_position' ] ):
       if i < len( vm_paramaters[ 'boot_order' ] ):
         try:
           vm2.set_boot_order( i + 1, BOOT_ORDER_MAP[ vm_paramaters[ 'boot_order' ][ i ] ] )
@@ -241,7 +248,7 @@ def _power_state_convert( state ):
     return 'unknown "{0}"'.format( state )
 
 
-def set_power( paramaters ):
+async def set_power( paramaters ):
   connection_paramaters = paramaters[ 'connection' ]
   vm_uuid = paramaters[ 'uuid' ]
   vm_name = paramaters[ 'name' ]
@@ -257,7 +264,7 @@ def set_power( paramaters ):
 
   progress = None
   if desired_state == 'on':
-    progress = vm.launch_vm_process( vbox.session )
+    progress = vm.launch_vm_process( FRONTEND, vbox.session )
 
   elif desired_state == 'off':
     vm.lock( vbox.session, constants.LockType.Shared )
@@ -279,7 +286,7 @@ def set_power( paramaters ):
   if progress is not None:
     while not progress.completed:
       logging.debug( 'virtualbox: vm "{0}"({1}) power "{2}" at {3}%, {4} seconds left'.format( vm_name, vm_uuid, desired_state, progress.percent, progress.time_remaining ) )
-      asyncio.sleep( 1 )
+      await asyncio.sleep( 2 )
 
   logging.info( 'virtualbox: setting power state of "{0}"({1}) to "{2}" complete'.format( vm_name, vm_uuid, desired_state ) )
   return { 'state': _power_state_convert( vm.state ) }

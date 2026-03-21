@@ -110,3 +110,11 @@ class LockType:
   Shared = 'Shared'  # 1
   Write = 'Write'  # 2
   VM = 'VM'  # 3
+
+
+class GraphicsControllerType:
+  Null = 'Null'  # 0
+  VBoxVGA = 'VBoxVGA'  # 1
+  VMSVGA = 'VMSVGA'  # 2
+  VBoxSVGA = 'VBoxSVGA'  # 3
+  QemuRamFB = 'QemuRamFB'  # 3
