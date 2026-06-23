@@ -1,5 +1,5 @@
 import logging
-import time
+import asyncio
 import json
 import base64
 import ssl
@@ -20,13 +20,13 @@ POWER_STATE_LOOKUP = { 'on': 'On', 'off': 'ForceOff', 'shutdown': 'GracefulShutd
 
 
 class RedFishClient():
-  def __init__( self, connection_paramaters ):
+  def __init__( self, connection_parameters ):
     super().__init__()
     self._chassis = None
     self._system = None
 
-    self.ip_address = connection_paramaters[ 'ip_address' ]
-    creds = connection_paramaters[ 'credentials' ]
+    self.ip_address = connection_parameters[ 'ip_address' ]
+    creds = connection_parameters[ 'credentials' ]
     if isinstance( creds, str ):
       creds = getCredentials( creds )
 
@@ -152,11 +152,11 @@ class RedFishClient():
     self._post( '{0}/Actions/ComputerSystem.Reset'.format( self.system ), { 'ResetType': reset_type } )
 
 
-def link_test( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
+def link_test( parameters ):
+  connection_parameters = parameters[ 'connection' ]
 
-  logging.info( 'RedFish: link test on "{0}"...'.format( connection_paramaters[ 'ip_address' ] ) )
-  client = RedFishClient( connection_paramaters )
+  logging.info( 'RedFish: link test on "{0}"...'.format( connection_parameters[ 'ip_address' ] ) )
+  client = RedFishClient( connection_parameters )
 
   success = True
   try:
@@ -167,12 +167,12 @@ def link_test( paramaters ):
   return { 'success': success }
 
 
-def set_power( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  desired_state = paramaters[ 'state' ]
+async def set_power( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  desired_state = parameters[ 'state' ]
 
-  logging.info( 'RedFish: setting power state of "{0}" to "{1}"...'.format( connection_paramaters[ 'ip_address' ], desired_state ) )
-  client = RedFishClient( connection_paramaters )
+  logging.info( 'RedFish: setting power state of "{0}" to "{1}"...'.format( connection_parameters[ 'ip_address' ], desired_state ) )
+  client = RedFishClient( connection_parameters )
 
   curent_state = client.getPower()
 
@@ -184,19 +184,19 @@ def set_power( paramaters ):
 
   client.setPower( desired_state )
 
-  time.sleep( 1 )
+  await asyncio.sleep( 1 )
 
   curent_state = client.getPower()
-  logging.info( 'RedFish: setting power state of "{0}" to "{1}" complete'.format( connection_paramaters[ 'ip_address' ], desired_state ) )
+  logging.info( 'RedFish: setting power state of "{0}" to "{1}" complete'.format( connection_parameters[ 'ip_address' ], desired_state ) )
   return { 'state': curent_state }
 
 
-def power_state( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
+def power_state( parameters ):
+  connection_parameters = parameters[ 'connection' ]
 
-  logging.info( 'RedFish: getting power state of "{0}"...'.format( connection_paramaters[ 'ip_address' ] ) )
+  logging.info( 'RedFish: getting power state of "{0}"...'.format( connection_parameters[ 'ip_address' ] ) )
 
-  client = RedFishClient( connection_paramaters )
+  client = RedFishClient( connection_parameters )
 
   curent_state = client.getPower()
   return { 'state': curent_state }

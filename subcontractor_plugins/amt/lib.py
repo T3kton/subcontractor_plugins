@@ -12,10 +12,10 @@ MAX_RETRIES = 5
 
 
 class AWTClient():
-  def __init__( self, connection_paramaters ):
+  def __init__( self, connection_parameters ):
     super().__init__()
-    self.ip_address = connection_paramaters[ 'ip_address' ]
-    creds = connection_paramaters[ 'credentials' ]
+    self.ip_address = connection_parameters[ 'ip_address' ]
+    creds = connection_parameters[ 'credentials' ]
     if isinstance( creds, str ):
       creds = getCredentials( creds )
 
@@ -28,7 +28,7 @@ class AWTClient():
   def disconnect( self ):
     pass
 
-  def _doCmd( self, func ):  # some AMT baords take a bit to wake up
+  async def _doCmd( self, func ):  # some AMT baords take a bit to wake up
     counter = 0
     while counter < MAX_RETRIES:
       try:
@@ -37,36 +37,36 @@ class AWTClient():
         pass
 
       logging.debug( 'AMT: Connecting Refused, try {0} of {1}'.format( counter, MAX_RETRIES ) )
-      asyncio.sleep( 1 )
+      await asyncio.sleep( 1 )
       counter += 1
 
     raise ConnectionRefusedError()
 
-  def getPower( self ):
-    result = self._doCmd( self._conn.power_status )
+  async def getPower( self ):
+    result = await self._doCmd( self._conn.power_status )
 
     try:
       return POWER_STATE_LOOKUP[ result ]
     except KeyError:
       raise ValueError( 'Unknown power state "{0}"'.format( result ) )
 
-  def setPower( self, state ):  # on, off, soft_off
+  async def setPower( self, state ):  # on, off, soft_off
     if state == 'on':
-      self._doCmd( self._conn.power_on )
+      await self._doCmd( self._conn.power_on )
     elif state == 'off':
-      self._doCmd( self._conn.power_off )
+      await self._doCmd( self._conn.power_off )
     elif state == 'soft_off':
-      self._doCmd( self._conn.power_off )
+      await self._doCmd( self._conn.power_off )
     else:
       raise ValueError( 'Unknown power state "{0}"'.format( state ) )
 
 
-def set_power( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  desired_state = paramaters[ 'state' ]
+async def set_power( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  desired_state = parameters[ 'state' ]
 
-  logging.info( 'AMT: setting power state of "{0}" to "{1}"...'.format( connection_paramaters[ 'ip_address' ], desired_state ) )
-  client = AWTClient( connection_paramaters )
+  logging.info( 'AMT: setting power state of "{0}" to "{1}"...'.format( connection_parameters[ 'ip_address' ], desired_state ) )
+  client = AWTClient( connection_parameters )
   client.connect()
 
   curent_state = client.getPower()
@@ -76,20 +76,20 @@ def set_power( paramaters ):
 
   client.setPower( desired_state )
 
-  asyncio.sleep( 1 )
+  await asyncio.sleep( 1 )
 
   curent_state = client.getPower()
   client.disconnect()
-  logging.info( 'AMT: setting power state of "{0}" to "{1}" complete'.format( connection_paramaters[ 'ip_address' ], desired_state ) )
+  logging.info( 'AMT: setting power state of "{0}" to "{1}" complete'.format( connection_parameters[ 'ip_address' ], desired_state ) )
   return { 'state': curent_state }
 
 
-def power_state( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
+def power_state( parameters ):
+  connection_parameters = parameters[ 'connection' ]
 
-  logging.info( 'AMT: getting power state of "{0}"...'.format( connection_paramaters[ 'ip_address' ] ) )
+  logging.info( 'AMT: getting power state of "{0}"...'.format( connection_parameters[ 'ip_address' ] ) )
 
-  client = AWTClient( connection_paramaters )
+  client = AWTClient( connection_parameters )
   client.connect()
 
   curent_state = client.getPower()

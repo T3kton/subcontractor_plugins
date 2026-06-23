@@ -5,9 +5,9 @@ from pysnmp import hlapi
 from subcontractor_plugins.iputils.pyping import ping as pyping
 
 
-def ping( paramaters ):
-  target = paramaters[ 'target' ]
-  count = paramaters[ 'count' ]
+def ping( parameters ):
+  target = parameters[ 'target' ]
+  count = parameters[ 'count' ]
   logging.debug( 'iputils: pinging "{0}" "{1}" times...'.format( target, count ) )
 
   pinger = pyping( target )
@@ -17,12 +17,12 @@ def ping( paramaters ):
   return { 'result': ( pinger.receive_count * 100.0 ) / pinger.send_count }
 
 
-def port_state( paramaters ):
-  target = paramaters[ 'target' ]
+def port_state( parameters ):
+  target = parameters[ 'target' ]
   try:
-    port = paramaters[ 'port' ]
+    port = parameters[ 'port' ]
   except TypeError:
-    raise ValueError( 'Port paramater must be an integer' )
+    raise ValueError( 'Port parameter must be an integer' )
 
   logging.debug( 'iputils: checking port "{0}" on "{1}"...'.format( port, target ) )
 
@@ -45,9 +45,9 @@ def port_state( paramaters ):
   return { 'state': state }
 
 
-def _snmp_connection( connection_paramaters ):
-  creds = connection_paramaters[ 'creds' ]
-  protocol = connection_paramaters.get( 'protocol', 'SNMPv2c' )
+def _snmp_connection( connection_parameters ):
+  creds = connection_parameters[ 'creds' ]
+  protocol = connection_parameters.get( 'protocol', 'SNMPv2c' )
   if protocol == 'SNMPv1':
     data = hlapi.CommunityData( creds[ 'community' ], mpModel=0 )
   elif protocol == 'SNMPv2c':
@@ -69,17 +69,17 @@ def _snmp_connection( connection_paramaters ):
 
   return ( hlapi.SnmpEngine(),
            data,
-           hlapi.UdpTransportTarget(( connection_paramaters[ 'host' ], connection_paramaters.get( 'port', 161 ) )),
+           hlapi.UdpTransportTarget(( connection_parameters[ 'host' ], connection_parameters.get( 'port', 161 ) )),
            hlapi.ContextData()
            )
 
 
-def snmp_get( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  oid = paramaters[ 'oid' ]
-  logging.debug( 'iputils: SNMP get OID "{0}" from "{1}"...'.format( oid, connection_paramaters[ 'host' ] ) )
+def snmp_get( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  oid = parameters[ 'oid' ]
+  logging.debug( 'iputils: SNMP get OID "{0}" from "{1}"...'.format( oid, connection_parameters[ 'host' ] ) )
 
-  cmd = hlapi.getCmd( *_snmp_connection( connection_paramaters ), hlapi.ObjectType( hlapi.ObjectIdentity( oid ) ) )
+  cmd = hlapi.getCmd( *_snmp_connection( connection_parameters ), hlapi.ObjectType( hlapi.ObjectIdentity( oid ) ) )
 
   error, errorStatus, errorIndex, result = next( cmd )
   if error is not None:
@@ -87,24 +87,24 @@ def snmp_get( paramaters ):
 
   value = result[0]._ObjectType__args[1].prettyPrint()  # there has to be a better way to get the value from ObjecType than this
 
-  logging.info( 'iputils: SNMP get OID "{0}" from "{1}" is "{2}"'.format( oid, connection_paramaters[ 'host' ], value ) )
+  logging.info( 'iputils: SNMP get OID "{0}" from "{1}" is "{2}"'.format( oid, connection_parameters[ 'host' ], value ) )
 
   return { 'value': value }
 
 
-def snmp_set( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  oid = paramaters[ 'oid' ]
-  value = paramaters[ 'value' ]
+def snmp_set( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  oid = parameters[ 'oid' ]
+  value = parameters[ 'value' ]
 
-  logging.debug( 'iputils: SNMP set OID "{0}" on "{1}" to "{2}"...'.format( oid, connection_paramaters[ 'host' ], value ) )
+  logging.debug( 'iputils: SNMP set OID "{0}" on "{1}" to "{2}"...'.format( oid, connection_parameters[ 'host' ], value ) )
 
-  cmd = hlapi.setCmd( *_snmp_connection( connection_paramaters ), hlapi.ObjectType( hlapi.ObjectIdentity( oid ), value ) )
+  cmd = hlapi.setCmd( *_snmp_connection( connection_parameters ), hlapi.ObjectType( hlapi.ObjectIdentity( oid ), value ) )
 
   error, errorStatus, errorIndex, result = next( cmd )
   if error is not None:
     raise Exception( 'Error with SNMP Set: "{0}", Error Status: "{1}", Error Index: {2}'.format( error, errorStatus, errorIndex ) )
 
-  logging.info( 'iputils: SNMP set OID "{0}" on "{1}" to "{2}"'.format( oid, connection_paramaters[ 'host' ], value ) )
+  logging.info( 'iputils: SNMP set OID "{0}" on "{1}" to "{2}"'.format( oid, connection_parameters[ 'host' ], value ) )
 
   return { 'done': True }

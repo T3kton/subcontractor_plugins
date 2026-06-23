@@ -1,5 +1,5 @@
 import logging
-import time
+import asyncio
 import re
 import random
 import ssl
@@ -32,32 +32,32 @@ class MOBNotFound( Exception ):
   pass
 
 
-def _connect( connection_paramaters ):
+def _connect( connection_parameters ):
   # work arround invalid SSL
   _create_unverified_https_context = ssl._create_unverified_context
   ssl._create_default_https_context = _create_unverified_https_context
-  # TODO: flag for trusting SSL of connection, also there is a paramater to Connect for verified SSL
+  # TODO: flag for trusting SSL of connection, also there is a parameter to Connect for verified SSL
 
-  creds = connection_paramaters[ 'credentials' ]
+  creds = connection_parameters[ 'credentials' ]
   if isinstance( creds, str ):
     creds = getCredentials( creds )
 
   # TODO: saninity check on creds
 
   if 'username' in creds:
-    logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( connection_paramaters[ 'host' ], creds[ 'username' ] ) )
-    return connect.SmartConnect( host=connection_paramaters[ 'host' ], user=creds[ 'username' ], pwd=creds[ 'password' ], mechanism='userpass' )
+    logging.debug( 'vcenter: connecting to "{0}" with user "{1}"'.format( connection_parameters[ 'host' ], creds[ 'username' ] ) )
+    return connect.SmartConnect( host=connection_parameters[ 'host' ], user=creds[ 'username' ], pwd=creds[ 'password' ], mechanism='userpass' )
 
   else:
-    logging.debug( 'vcenter: connecting to "{0}" with token "{1}"'.format( connection_paramaters[ 'host' ], creds[ 'token' ] ) )
-    return connect.SmartConnect( host=connection_paramaters[ 'host' ], b64token=creds[ 'token' ], mechanism='sspi' )
+    logging.debug( 'vcenter: connecting to "{0}" with token "{1}"'.format( connection_parameters[ 'host' ], creds[ 'token' ] ) )
+    return connect.SmartConnect( host=connection_parameters[ 'host' ], b64token=creds[ 'token' ], mechanism='sspi' )
 
 
 def _disconnect( si ):
   connect.Disconnect( si )
 
 
-def _taskWait( task ):
+async def _taskWait( task ):
   while True:
     if task.info.state not in ( 'running', 'queued' ):
       return
@@ -72,7 +72,7 @@ def _taskWait( task ):
     else:
       logging.debug( 'vmware: Waiting ...' )
 
-    time.sleep( POLL_INTERVAL )
+    await asyncio.sleep( POLL_INTERVAL )
 
 
 def _getDatacenter( si, name ):
@@ -154,16 +154,16 @@ def _genNetworkBacking( network ):
   return result
 
 
-def host_list( paramaters ):
+def host_list( parameters ):
   # returns a list of hosts in a resource
-  # host must have paramater[ 'min_memory' ] aviable in MB
-  # orderd by paramater[ 'cpu_scaler' ] * %cpu remaning + paramater[ 'memory_scaler' ] * %mem remaning
-  connection_paramaters = paramaters[ 'connection' ]
-  logging.info( 'vcenter: getting Host List for dc: "{0}"  rp: "{1}"'.format( paramaters[ 'datacenter' ], paramaters[ 'cluster' ] ) )
-  si = _connect( connection_paramaters )
+  # host must have parameter[ 'min_memory' ] aviable in MB
+  # orderd by parameter[ 'cpu_scaler' ] * %cpu remaning + parameter[ 'memory_scaler' ] * %mem remaning
+  connection_parameters = parameters[ 'connection' ]
+  logging.info( 'vcenter: getting Host List for dc: "{0}"  rp: "{1}"'.format( parameters[ 'datacenter' ], parameters[ 'cluster' ] ) )
+  si = _connect( connection_parameters )
   try:
-    dataCenter = _getDatacenter( si, paramaters[ 'datacenter' ] )
-    resourcePool = _getResourcePool( dataCenter, paramaters[ 'cluster' ] )
+    dataCenter = _getDatacenter( si, parameters[ 'datacenter' ] )
+    resourcePool = _getResourcePool( dataCenter, parameters[ 'cluster' ] )
 
     host_map = {}
     for host in resourcePool.owner.host:
@@ -172,14 +172,14 @@ def host_list( paramaters ):
 
       total_memory = host.summary.hardware.memorySize / 1024.0 / 1024.0  # we want MiB
       memory_aviable = total_memory - host.summary.quickStats.overallMemoryUsage
-      if memory_aviable < paramaters[ 'min_memory' ]:
+      if memory_aviable < parameters[ 'min_memory' ]:
         logging.debug( 'vcenter: host "{0}", low aviable ram: "{1}"'.format( host.name, memory_aviable ) )
         continue
 
       total_cpu = host.summary.hardware.numCpuCores * host.summary.hardware.cpuMhz
       cpu_aviable = total_cpu - host.summary.quickStats.overallCpuUsage
 
-      host_map[ host.name ] = ( paramaters[ 'memory_scaler' ] * ( memory_aviable / total_memory ) ) + ( paramaters[ 'cpu_scaler' ] * ( cpu_aviable / total_cpu ) )
+      host_map[ host.name ] = ( parameters[ 'memory_scaler' ] * ( memory_aviable / total_memory ) ) + ( parameters[ 'cpu_scaler' ] * ( cpu_aviable / total_cpu ) )
 
     logging.debug( 'vcenter: host_map {0}'.format( host_map ) )
 
@@ -192,14 +192,14 @@ def host_list( paramaters ):
     _disconnect( si )
 
 
-def create_datastore( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  logging.info( 'vcenter: creating datastores: "{0}"'.format( paramaters[ 'name' ] ) )
-  si = _connect( connection_paramaters )
+def create_datastore( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  logging.info( 'vcenter: creating datastores: "{0}"'.format( parameters[ 'name' ] ) )
+  si = _connect( connection_parameters )
   try:
-    dataCenter = _getDatacenter( si, paramaters[ 'datacenter' ] )
-    resourcePool = _getResourcePool( dataCenter, paramaters[ 'host' ] )
-    host = _getHost( resourcePool, paramaters[ 'host' ] )
+    dataCenter = _getDatacenter( si, parameters[ 'datacenter' ] )
+    resourcePool = _getResourcePool( dataCenter, parameters[ 'host' ] )
+    host = _getHost( resourcePool, parameters[ 'host' ] )
 
     dss = host.configManager.datastoreSystem
     ss = host.configManager.storageSystem
@@ -211,15 +211,15 @@ def create_datastore( paramaters ):
     spec = None
     for i in range( 0, len( disk_list ) ):
       disk = disk_list[ i ]
-      if disk[ 'model' ] == paramaters[ 'model' ]:
+      if disk[ 'model' ] == parameters[ 'model' ]:
         spec = dss.QueryVmfsDatastoreCreateOptions( disk[ 'path' ] )[0].spec
         del disk_list[ i ]
         break
 
     if spec is None:
-      raise ValueError( 'Unable to find an aviable disk with model "{0}"'.format( paramaters[ 'model' ] ) )
+      raise ValueError( 'Unable to find an aviable disk with model "{0}"'.format( parameters[ 'model' ] ) )
 
-    spec.vmfs.volumeName = paramaters[ 'name' ]
+    spec.vmfs.volumeName = parameters[ 'name' ]
 
     dss.CreateVmfsDatastore( spec )
 
@@ -229,30 +229,30 @@ def create_datastore( paramaters ):
     _disconnect( si )
 
 
-def datastore_list( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  logging.info( 'vcenter: getting Datastore List for dc: "{0}" rp: "{1}" host: "{2}"'.format( paramaters[ 'datacenter' ], paramaters[ 'cluster' ], paramaters[ 'host' ] ) )
-  paramaters[ 'min_free_space' ] = paramaters[ 'min_free_space' ]
-  if paramaters.get( 'name_regex', None ):  # could also be ''
+def datastore_list( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  logging.info( 'vcenter: getting Datastore List for dc: "{0}" rp: "{1}" host: "{2}"'.format( parameters[ 'datacenter' ], parameters[ 'cluster' ], parameters[ 'host' ] ) )
+  parameters[ 'min_free_space' ] = parameters[ 'min_free_space' ]
+  if parameters.get( 'name_regex', None ):  # could also be ''
     try:
-      paramaters[ 'name_regex' ] = re.compile( paramaters[ 'name_regex' ] )
+      parameters[ 'name_regex' ] = re.compile( parameters[ 'name_regex' ] )
     except TypeError:
-      paramaters[ 'name_regex' ] = None
+      parameters[ 'name_regex' ] = None
   else:
-    paramaters[ 'name_regex' ] = None
+    parameters[ 'name_regex' ] = None
 
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
-    dataCenter = _getDatacenter( si, paramaters[ 'datacenter' ] )
-    resourcePool = _getResourcePool( dataCenter, paramaters[ 'cluster' ] )
-    host = _getHost( resourcePool, paramaters[ 'host' ] )
+    dataCenter = _getDatacenter( si, parameters[ 'datacenter' ] )
+    resourcePool = _getResourcePool( dataCenter, parameters[ 'cluster' ] )
+    host = _getHost( resourcePool, parameters[ 'host' ] )
 
     result = []
     for datastore in host.datastore:
-      if datastore.summary.freeSpace / 1024.0 / 1024.0 / 1024.0 < paramaters[ 'min_free_space' ]:
+      if datastore.summary.freeSpace / 1024.0 / 1024.0 / 1024.0 < parameters[ 'min_free_space' ]:
         continue
 
-      if paramaters[ 'name_regex' ] is not None and not paramaters[ 'name_regex' ].match( datastore.name ):
+      if parameters[ 'name_regex' ] is not None and not parameters[ 'name_regex' ].match( datastore.name ):
         continue
 
       result.append( datastore.name )
@@ -263,24 +263,24 @@ def datastore_list( paramaters ):
     _disconnect( si )
 
 
-def network_list( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  logging.info( 'vcenter: getting Network List for dc: "{0}" rp: "{1}" host: "{2}"'.format( paramaters[ 'datacenter' ], paramaters[ 'cluster' ], paramaters[ 'host' ] ) )
+def network_list( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  logging.info( 'vcenter: getting Network List for dc: "{0}" rp: "{1}" host: "{2}"'.format( parameters[ 'datacenter' ], parameters[ 'cluster' ], parameters[ 'host' ] ) )
 
   try:
-    paramaters[ 'name_regex' ] = re.compile( paramaters[ 'name_regex' ] )
+    parameters[ 'name_regex' ] = re.compile( parameters[ 'name_regex' ] )
   except TypeError:
     pass
 
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
-    dataCenter = _getDatacenter( si, paramaters[ 'datacenter' ] )
-    resourcePool = _getResourcePool( dataCenter, paramaters[ 'cluster' ] )
-    host = _getHost( resourcePool, paramaters[ 'host' ] )
+    dataCenter = _getDatacenter( si, parameters[ 'datacenter' ] )
+    resourcePool = _getResourcePool( dataCenter, parameters[ 'cluster' ] )
+    host = _getHost( resourcePool, parameters[ 'host' ] )
 
     result = []
     for network in host.network:
-      if paramaters[ 'name_regex' ] is not None and not paramaters[ 'name_regex' ].match( network.name ):
+      if parameters[ 'name_regex' ] is not None and not parameters[ 'name_regex' ].match( network.name ):
         continue
 
       result.append( network.name )
@@ -291,13 +291,13 @@ def network_list( paramaters ):
     _disconnect( si )
 
 
-def _createDisk( si, dc, disk, datastore, file_path ):
+async def _createDisk( si, dc, disk, datastore, file_path ):
   ( dir_name, _ ) = file_path.rsplit( '/', 1 )
 
   spec = vim.host.DatastoreBrowser.SearchSpec()
   spec.query.append( vim.host.DatastoreBrowser.FolderQuery() )
   task = datastore.browser.SearchDatastore_Task( datastorePath=dir_name, searchSpec=spec )
-  _taskWait( task )
+  await _taskWait( task )
 
   if task.info.state == 'error':
     if task.info.error.__class__.__name__ == 'vim.fault.FileNotFound':
@@ -317,7 +317,7 @@ def _createDisk( si, dc, disk, datastore, file_path ):
   logging.debug( 'vcenter: creating disk "{0}"'.format( file_path ) )
 
   task = si.content.virtualDiskManager.CreateVirtualDisk( name=file_path, datacenter=dc, spec=spec )
-  _taskWait( task )
+  await _taskWait( task )
 
   if task.info.state == 'error':
     raise Exception( 'Unknown Task Error when Creating Disk: "{0}"'.format( task.info.error ) )
@@ -326,10 +326,10 @@ def _createDisk( si, dc, disk, datastore, file_path ):
     raise Exception( 'Unexpected Task State when Creating Disk: "{0}"'.format( task.info.state ) )
 
 
-def _inject_ovf_env( si, vm, vm_paramaters ):
+async def _inject_ovf_env( si, vm, vm_parameters ):
   logging.info( 'vcenter: injecting ovf enviornment' )
   try:
-    property_map = vm_paramaters[ 'property_map' ]
+    property_map = vm_parameters[ 'property_map' ]
   except KeyError:
     return
 
@@ -373,7 +373,7 @@ def _inject_ovf_env( si, vm, vm_paramaters ):
   configSpec.extraConfig = [ opt ]
 
   task = vm.ReconfigVM_Task( configSpec )
-  _taskWait( task )
+  await _taskWait( task )
 
   if task.info.state == 'error':
     raise Exception( 'Error With OVF Environment Injection: "{0}"'.format( task.info.error ) )
@@ -382,39 +382,39 @@ def _inject_ovf_env( si, vm, vm_paramaters ):
     raise Exception( 'Unexpected Task State With OVF Environment Injection: "{0}"'.format( task.info.state ) )
 
 
-def _create_from_template( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
-  logging.info( 'vcenter: creating from Template("{0}") "{1}"'.format( vm_paramaters[ 'template' ], vm_name ) )
+async def _create_from_template( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_parameters ):
+  logging.info( 'vcenter: creating from Template("{0}") "{1}"'.format( vm_parameters[ 'template' ], vm_name ) )
 
   template = None
   cont = si.RetrieveContent()
   for item in cont.viewManager.CreateContainerView( data_center, [ vim.VirtualMachine ], True ).view:
-    if item.name == vm_paramaters[ 'template' ]:
+    if item.name == vm_parameters[ 'template' ]:
       template = item
       break
 
   if template is None:
-    raise MOBNotFound( 'vcenter: unable to find template "{0}"'.format( vm_paramaters[ 'template' ] ) )
+    raise MOBNotFound( 'vcenter: unable to find template "{0}"'.format( vm_parameters[ 'template' ] ) )
 
   network_device_list = []
   for device in template.config.hardware.device:
     if isinstance( device, vim.vm.device.VirtualEthernetCard ):
       network_device_list.append( device )
 
-  if len( network_device_list ) != len( vm_paramaters[ 'interface_list' ] ):
+  if len( network_device_list ) != len( vm_parameters[ 'interface_list' ] ):
     raise ValueError( 'network in template and config missmatch' )
 
   configSpec = vim.vm.ConfigSpec()
   customSpec = vim.vm.customization.Specification()
 
   customSpec.identity = vim.vm.customization.LinuxPrep()
-  customSpec.identity.domain = vm_paramaters[ 'domain' ]
-  customSpec.identity.hostName = vim.vm.customization.FixedName( name=vm_paramaters[ 'hostname' ] )
+  customSpec.identity.domain = vm_parameters[ 'domain' ]
+  customSpec.identity.hostName = vim.vm.customization.FixedName( name=vm_parameters[ 'hostname' ] )
   customSpec.globalIPSettings = vim.vm.customization.GlobalIPSettings()
-  customSpec.globalIPSettings.dnsServerList = vm_paramaters[ 'dnsserver_list' ]
-  customSpec.globalIPSettings.dnsSuffixList = vm_paramaters[ 'dnssuffix_list' ]
+  customSpec.globalIPSettings.dnsServerList = vm_parameters[ 'dnsserver_list' ]
+  customSpec.globalIPSettings.dnsSuffixList = vm_parameters[ 'dnssuffix_list' ]
 
-  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
-    interface = vm_paramaters[ 'interface_list' ][ i ]
+  for i in range( 0, len( vm_parameters[ 'interface_list' ] ) ):
+    interface = vm_parameters[ 'interface_list' ][ i ]
     network = _getNetwork( host, interface[ 'network' ] )
 
     devSpec = vim.vm.device.VirtualDeviceSpec()
@@ -438,12 +438,12 @@ def _create_from_template( si, vm_name, data_center, resource_pool, folder, host
     adapter.macAddress = interface[ 'mac' ]
     customSpec.nicSettingMap.append( adapter )
 
-  property_map = vm_paramaters.get( 'property_map', None )
+  property_map = vm_parameters.get( 'property_map', None )
   if property_map is not None:
     configSpec.vAppConfig = vim.vApp.VmConfigSpec()
     configSpec.vAppConfig.ovfEnvironmentTransport = [ 'com.vmware.guestInfo' ]
     counter = 0
-    for key, value in vm_paramaters[ 'property_map' ].items():
+    for key, value in vm_parameters[ 'property_map' ].items():
       counter += 1
       property = vim.vApp.PropertySpec()
       property.operation = 'add'
@@ -467,7 +467,7 @@ def _create_from_template( si, vm_name, data_center, resource_pool, folder, host
   cloneSpec.template = False
 
   task = template.Clone( folder=folder, name=vm_name, spec=cloneSpec )
-  _taskWait( task )
+  await _taskWait( task )
 
   if task.info.state == 'error':
     raise Exception( 'Error With VM Clone Task: "{0}"'.format( task.info.error ) )
@@ -478,24 +478,24 @@ def _create_from_template( si, vm_name, data_center, resource_pool, folder, host
   return task.info.result.config.instanceUuid
 
 
-def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
-  logging.info( 'vcenter: creating from OVA("{0}") "{1}"'.format( vm_paramaters[ 'ova' ], vm_name ) )
+async def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, folder, host, datastore, vm_parameters ):
+  logging.info( 'vcenter: creating from OVA("{0}") "{1}"'.format( vm_parameters[ 'ova' ], vm_name ) )
   if hasattr( ssl, '_create_unverified_context' ):
     sslContext = ssl._create_unverified_context()
   else:
     sslContext = None
 
-  handler = OVAImportHandler( vm_paramaters[ 'ova' ], sslContext )
+  handler = OVAImportHandler( vm_parameters[ 'ova' ], sslContext )
 
   ovf_manager = si.content.ovfManager
 
   network_mapping = []
-  for interface in vm_paramaters[ 'interface_list' ]:
+  for interface in vm_parameters[ 'interface_list' ]:
     network_mapping.append( vim.OvfManager.NetworkMapping( name=interface[ 'physical_location' ], network=_getNetwork( host, interface[ 'network' ] ) ) )
 
   property_map = []
   try:
-    for key, value in vm_paramaters[ 'property_map' ].items():
+    for key, value in vm_parameters[ 'property_map' ].items():
       property_map.append( vim.KeyValue( key=key, value=value ) )
   except KeyError:
     pass
@@ -503,17 +503,17 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
   cisp = vim.OvfManager.CreateImportSpecParams( entityName=vm_name, hostSystem=host, propertyMapping=property_map, networkMapping=network_mapping )
 
   try:
-    cisp.diskProvisioning = vm_paramaters[ 'disk_provisioning' ]
+    cisp.diskProvisioning = vm_parameters[ 'disk_provisioning' ]
   except KeyError:
     pass
 
   try:
-    cisp.deploymentOption = vm_paramaters[ 'deployment_option' ]
+    cisp.deploymentOption = vm_parameters[ 'deployment_option' ]
   except KeyError:
     pass
 
   try:
-    cisp.ipProtocol = vm_paramaters[ 'ip_protocol' ]
+    cisp.ipProtocol = vm_parameters[ 'ip_protocol' ]
   except KeyError:
     pass
 
@@ -524,7 +524,7 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
   if result.importSpec is not None and result.importSpec.configSpec.vAppConfig is not None:
     for property in result.importSpec.configSpec.vAppConfig.property:
       info = property.info
-      if info.id in vm_paramaters[ 'property_map' ] and not info.userConfigurable:
+      if info.id in vm_parameters[ 'property_map' ] and not info.userConfigurable:
         logging.warning( 'Setting non user configurable "{0}" to configurable'.format( info.id ) )
         info.userConfigurable = True
 
@@ -537,24 +537,24 @@ def _create_from_ova( si, vm_name, connection_host, data_center, resource_pool, 
   uuid = handler.upload( connection_host, resource_pool, result, data_center )
 
   if si.content.about.productLineId == 'embeddedEsx':
-    _inject_ovf_env( si, _getVM( si, uuid ), vm_paramaters )
+    await _inject_ovf_env( si, _getVM( si, uuid ), vm_parameters )
 
   return uuid
 
 
-def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters ):
+async def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_parameters ):
   logging.info( 'vcenter: creating from scratch "{0}"'.format( vm_name ) )
 
-  vmx_file_path, disk_filepath_list = _genPaths( vm_paramaters[ 'name' ], vm_paramaters[ 'disk_list' ], datastore )
+  vmx_file_path, disk_filepath_list = _genPaths( vm_parameters[ 'name' ], vm_parameters[ 'disk_list' ], datastore )
 
-  for i in range( 0, len( vm_paramaters[ 'disk_list' ] ) ):
-    _createDisk( si, data_center, vm_paramaters[ 'disk_list' ][ i ], datastore, disk_filepath_list[ i ] )
+  for i in range( 0, len( vm_parameters[ 'disk_list' ] ) ):
+    await _createDisk( si, data_center, vm_parameters[ 'disk_list' ][ i ], datastore, disk_filepath_list[ i ] )
 
   configSpec = vim.vm.ConfigSpec()
   configSpec.name = vm_name
-  configSpec.memoryMB = vm_paramaters[ 'memory_size' ]  # in MiB
-  configSpec.numCPUs = vm_paramaters[ 'cpu_count' ]
-  configSpec.guestId = vm_paramaters[ 'guest_id' ]
+  configSpec.memoryMB = vm_parameters[ 'memory_size' ]  # in MiB
+  configSpec.numCPUs = vm_parameters[ 'cpu_count' ]
+  configSpec.guestId = vm_parameters[ 'guest_id' ]
 
   configSpec.flags = vim.vm.FlagInfo()
 
@@ -576,8 +576,8 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
   devSpec.device.unitNumber = 0
   configSpec.deviceChange.append( devSpec )
 
-  for i in range( 0, len( vm_paramaters[ 'disk_list' ] ) ):
-    disk = vm_paramaters[ 'disk_list' ][ i ]
+  for i in range( 0, len( vm_parameters[ 'disk_list' ] ) ):
+    disk = vm_parameters[ 'disk_list' ][ i ]
     devSpec = vim.vm.device.VirtualDeviceSpec()
     devSpec.operation = 'add'
     devSpec.device = vim.vm.device.VirtualDisk()
@@ -591,8 +591,8 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
     devSpec.device.backing.diskMode = 'persistent'
     configSpec.deviceChange.append( devSpec )
 
-  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
-    interface = vm_paramaters[ 'interface_list' ][ i ]
+  for i in range( 0, len( vm_parameters[ 'interface_list' ] ) ):
+    interface = vm_parameters[ 'interface_list' ][ i ]
     network = _getNetwork( host, interface[ 'network' ] )
 
     try:
@@ -611,10 +611,10 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
     devSpec.device.backing = _genNetworkBacking( network )
     configSpec.deviceChange.append( devSpec )
 
-  for item in vm_paramaters[ 'boot_order' ]:
+  for item in vm_parameters[ 'boot_order' ]:
     configSpec.bootOptions.bootOrder.append( BOOT_ORDER_MAP[ item ] )
 
-  veu = vm_paramaters.get( 'virtual_exec_usage', None )
+  veu = vm_parameters.get( 'virtual_exec_usage', None )
   if veu == 'on':
     configSpec.flags.virtualExecUsage = 'hvOn'
   elif veu == 'off':
@@ -622,7 +622,7 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
   elif veu == 'auto':
     configSpec.flags.virtualExecUsage = 'hvAuto'
 
-  vmu = vm_paramaters.get( 'virtual_mmu_usage', None )
+  vmu = vm_parameters.get( 'virtual_mmu_usage', None )
   if vmu == 'on':
     configSpec.flags.virtualMmuUsage = 'on'
   elif vmu == 'off':
@@ -630,15 +630,15 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
   elif vmu == 'auto':
     configSpec.flags.virtualMmuUsage = 'automatic'
 
-  if vm_paramaters.get( 'virtual_vhv', False ):
+  if vm_parameters.get( 'virtual_vhv', False ):
     configSpec.nestedHVEnabled = True
 
-  property_map = vm_paramaters.get( 'property_map', None )
+  property_map = vm_parameters.get( 'property_map', None )
   if property_map is not None:
     configSpec.vAppConfig = vim.vApp.VmConfigSpec()
     configSpec.vAppConfig.ovfEnvironmentTransport = [ 'com.vmware.guestInfo' ]
     counter = 0
-    for key, value in vm_paramaters[ 'property_map' ].items():
+    for key, value in vm_parameters[ 'property_map' ].items():
       counter += 1
       property = vim.vApp.PropertySpec()
       property.operation = 'add'
@@ -651,7 +651,7 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
 
   task = folder.CreateVm( config=configSpec, pool=resource_pool, host=host )
 
-  _taskWait( task )
+  await _taskWait( task )
 
   if task.info.state == 'error':
     raise Exception( 'Error With VM Create Task: "{0}"'.format( task.info.error ) )
@@ -662,32 +662,32 @@ def _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host,
   return task.info.result.config.instanceUuid
 
 
-def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore should be done prior to calling this, that way rollback can know where it's at
-  vm_paramaters = paramaters[ 'vm' ]
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_name = vm_paramaters[ 'name' ]
+async def create( parameters ):  # NOTE: the picking of the cluster/host and datastore should be done prior to calling this, that way rollback can know where it's at
+  vm_parameters = parameters[ 'vm' ]
+  connection_parameters = parameters[ 'connection' ]
+  vm_name = vm_parameters[ 'name' ]
 
   # vcenter static mac are 00:50:56:00:00:00 -> 00:50:56:3F:FF:FF
   # not used by OVA deploy, mabey it should?
-  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
+  for i in range( 0, len( vm_parameters[ 'interface_list' ] ) ):
     mac = '005056{0:06x}'.format( random.randint( 0, 4194303 ) )  # TODO: check to see if the mac is allready in use, also make them sequential
-    vm_paramaters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
+    vm_parameters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
 
   logging.info( 'vcenter: creating vm "{0}"'.format( vm_name ) )
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
-    data_center = _getDatacenter( si, vm_paramaters[ 'datacenter' ] )
-    resource_pool = _getResourcePool( data_center, vm_paramaters[ 'cluster' ] )
+    data_center = _getDatacenter( si, vm_parameters[ 'datacenter' ] )
+    resource_pool = _getResourcePool( data_center, vm_parameters[ 'cluster' ] )
     folder = data_center.vmFolder
-    host = _getHost( resource_pool, vm_paramaters[ 'host' ] )
-    datastore = _getDatastore( data_center, vm_paramaters[ 'datastore' ] )
+    host = _getHost( resource_pool, vm_parameters[ 'host' ] )
+    datastore = _getDatastore( data_center, vm_parameters[ 'datastore' ] )
 
-    if 'ova' in vm_paramaters:
-      vm_uuid = _create_from_ova( si, vm_name, paramaters[ 'connection' ][ 'host' ], data_center, resource_pool, folder, host, datastore, vm_paramaters )
-    elif 'template' in vm_paramaters:
-      vm_uuid = _create_from_template( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters )
+    if 'ova' in vm_parameters:
+      vm_uuid = await _create_from_ova( si, vm_name, parameters[ 'connection' ][ 'host' ], data_center, resource_pool, folder, host, datastore, vm_parameters )
+    elif 'template' in vm_parameters:
+      vm_uuid = await _create_from_template( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_parameters )
     else:
-      vm_uuid = _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_paramaters )
+      vm_uuid = await _create_from_scratch( si, vm_name, data_center, resource_pool, folder, host, datastore, vm_parameters )
 
     logging.info( 'vcenter: vm "{0}" created, uuid: "{1}"'.format( vm_name, vm_uuid ) )
 
@@ -697,25 +697,25 @@ def create( paramaters ):  # NOTE: the picking of the cluster/host and datastore
     _disconnect( si )
 
 
-def create_rollback( paramaters ):
-  vm_paramaters = paramaters[ 'vm' ]
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_name = vm_paramaters[ 'name' ]
+async def create_rollback( parameters ):
+  vm_parameters = parameters[ 'vm' ]
+  connection_parameters = parameters[ 'connection' ]
+  vm_name = vm_parameters[ 'name' ]
   logging.info( 'vcenter: rolling back vm "{0}"'.format( vm_name ) )
 
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
-    dataCenter = _getDatacenter( si, vm_paramaters[ 'datacenter' ] )
-    datastore = _getDatastore( dataCenter, vm_paramaters[ 'datastore' ] )
+    dataCenter = _getDatacenter( si, vm_parameters[ 'datacenter' ] )
+    datastore = _getDatastore( dataCenter, vm_parameters[ 'datastore' ] )
 
-    vmx_file_path, disk_filepath_list = _genPaths( vm_paramaters[ 'name' ], vm_paramaters[ 'disk_list' ], datastore )
+    vmx_file_path, disk_filepath_list = _genPaths( vm_parameters[ 'name' ], vm_parameters[ 'disk_list' ], datastore )
 
     file_list = disk_filepath_list + [ i.replace( '.vmdk', '-flat.vmdk' ) for i in disk_filepath_list ] + [ vmx_file_path ]
 
     for item in file_list:
       logging.debug( 'vcenter: deleting "{0}"'.format( item ) )
       task = si.content.fileManager.DeleteFile( name=item, datacenter=dataCenter )
-      _taskWait( task )
+      await _taskWait( task )
       if task.info.state == 'error':
         if task.info.error.__class__.__name__ == 'vim.fault.FileNotFound':
           continue
@@ -733,13 +733,13 @@ def create_rollback( paramaters ):
     _disconnect( si )
 
 
-def destroy( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
+async def destroy( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
 
   logging.info( 'vcenter: destroying vm "{0}"({1})'.format( vm_name, vm_uuid ) )
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
     try:
       vm = _getVM( si, vm_uuid )
@@ -748,7 +748,7 @@ def destroy( paramaters ):
 
     task = vm.Destroy()
 
-    _taskWait( task )
+    await _taskWait( task )
 
     if task.info.state == 'error':
       raise Exception( 'Error With VM Destroy Task: "{0}"'.format( task.info.error ) )
@@ -763,14 +763,14 @@ def destroy( paramaters ):
     _disconnect( si )
 
 
-def get_interface_map( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
+def get_interface_map( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
   interface_list = []
 
   logging.info( 'vcenter: getting interface map "{0}"({1})'.format( vm_name, vm_uuid ) )
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
     vm = _getVM( si, vm_uuid )
 
@@ -799,14 +799,14 @@ def _power_state_convert( state ):
     return 'unknown "{0}"'.format( state )
 
 
-def set_power( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
-  desired_state = paramaters[ 'state' ]
+async def set_power( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
+  desired_state = parameters[ 'state' ]
 
   logging.info( 'vcenter: setting power state of "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, desired_state ) )
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
     vm = _getVM( si, vm_uuid )
 
@@ -833,14 +833,14 @@ def set_power( paramaters ):
     if task is not None:
       while task.info.state not in ( vim.TaskInfo.State.success, vim.TaskInfo.State.error ):
         logging.debug( 'vcenter: vm "{0}"({1}) power "{2}" at {3}%'.format( vm_name, vm_uuid, desired_state, task.info.progress ) )
-        time.sleep( POLL_INTERVAL )
+        await asyncio.sleep( POLL_INTERVAL )
 
       # invalid power status happens when we try to turn off a vm that is allready off
       if task.info.state == vim.TaskInfo.State.error and task.info.error.__class__.__name__ != 'vim.fault.InvalidPowerState':   # will try again, if it happens again, the count will get it
         raise Exception( 'vcenter: Unable to set power state of "{0}"({1}) to "{2}": "{3}"'.format( vm_name, vm_uuid, desired_state, task.info.error ) )
 
     else:
-      time.sleep( POLL_INTERVAL * 2 )  # give the vm the chance to do something
+      await asyncio.sleep( POLL_INTERVAL * 2 )  # give the vm the chance to do something
 
     logging.info( 'vcenter: setting power state of "{0}"({1}) to "{2}" complete'.format( vm_name, vm_uuid, desired_state ) )
     return { 'state': _power_state_convert( vm.runtime.powerState ) }
@@ -849,13 +849,13 @@ def set_power( paramaters ):
     _disconnect( si )
 
 
-def power_state( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
+def power_state( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
 
   logging.info( 'vcenter: getting "{0}"({1}) power state...'.format( vm_name, vm_uuid ) )
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
     vm = _getVM( si, vm_uuid )
 
@@ -865,16 +865,16 @@ def power_state( paramaters ):
     _disconnect( si )
 
 
-def execute( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
-  program = paramaters[ 'program' ]
-  args = paramaters[ 'args' ]
-  dir = paramaters[ 'dir' ]
+await def execute( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
+  program = parameters[ 'program' ]
+  args = parameters[ 'args' ]
+  dir = parameters[ 'dir' ]
 
   logging.info( 'vcenter: executing "{0}" "{1}" on "{2}"({3})'.format( program, args, vm_name, vm_uuid ) )
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
     vm = _getVM( si, vm_uuid )
 
@@ -883,7 +883,7 @@ def execute( paramaters ):
 
     pManager = si.content.guestOperationsManager.processManager
 
-    passwordAuth = vim.vm.guest.NamePasswordAuthentication( username=paramaters[ 'username' ], password=paramaters[ 'password' ] )
+    passwordAuth = vim.vm.guest.NamePasswordAuthentication( username=parameters[ 'username' ], password=parameters[ 'password' ] )
 
     programSpec = vim.vm.guest.ProcessManager.ProgramSpec()
     programSpec.programPath = program
@@ -894,11 +894,11 @@ def execute( paramaters ):
 
     logging.debug( 'vcenter: executing "{0}" "{1}" on "{2}"({3}) is pid "{4}"'.format( program, args, vm_name, vm_uuid, pid ) )
 
-    finish_by = timedelta( seconds=paramaters[ 'timeout' ] ) + datetime.utcnow()
+    finish_by = timedelta( seconds=parameters[ 'timeout' ] ) + datetime.utcnow()
     pList = pManager.ListProcessesInGuest( vm=vm, auth=passwordAuth, pids=[ pid ] )
     while pList[0].exitCode is None:
       logging.debug( 'vcenter: executing "{0}" "{1}" on "{2}"({3}) waiting for "{4}"...'.format( program, args, vm_name, vm_uuid, pid ) )
-      time.sleep( POLL_INTERVAL )
+      await asyncio.sleep( POLL_INTERVAL )
       pList = pManager.ListProcessesInGuest( vm=vm, auth=passwordAuth, pids=[ pid ] )
 
       if datetime.utcnow() > finish_by:
@@ -910,14 +910,14 @@ def execute( paramaters ):
     _disconnect( si )
 
 
-def mark_as_template( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
-  as_template = paramaters[ 'as_template' ]
+def mark_as_template( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
+  as_template = parameters[ 'as_template' ]
 
   logging.info( 'vcenter: mark_as_template "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, as_template ) )
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
     if si.content.about.productLineId == 'embeddedEsx':  # mark as template not supported on ESX
       return {}
@@ -935,11 +935,11 @@ def mark_as_template( paramaters ):
     _disconnect( si )
 
 
-def export( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
-  url = paramaters[ 'url' ]
+def export( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
+  url = parameters[ 'url' ]
 
   if hasattr( ssl, '_create_unverified_context' ):
     sslContext = ssl._create_unverified_context()
@@ -948,11 +948,11 @@ def export( paramaters ):
 
   logging.info( 'vcenter: exporting "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, url ) )
 
-  si = _connect( connection_paramaters )
+  si = _connect( connection_parameters )
   try:
     handler = OVAExportHandler( si.content.ovfManager, url, sslContext )
     vm = _getVM( si, vm_uuid )
-    location = handler.export( paramaters[ 'connection' ][ 'host' ], vm, vm_name )
+    location = handler.export( parameters[ 'connection' ][ 'host' ], vm, vm_name )
 
     return { 'location': location }
 

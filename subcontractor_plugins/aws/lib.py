@@ -25,14 +25,14 @@ def _connect():
 
 
 #  https://boto3.readthedocs.io/en/latest/reference/services/ec2.html#EC2.ServiceResource.create_instances
-def create( paramaters ):
-  instance_name = paramaters[ 'name' ]
+def create( parameters ):
+  instance_name = parameters[ 'name' ]
   logging.info( 'aws: creating instance "{0}"'.format( instance_name ) )
   ec2 = _connect()
 
-  instance_paramaters = {
-                          'ImageId': paramaters[ 'image_id' ],
-                          'InstanceType': paramaters[ 'instance_type' ],
+  instance_parameters = {
+                          'ImageId': parameters[ 'image_id' ],
+                          'InstanceType': parameters[ 'instance_type' ],
                           # 'TagSpecifications': [ { 'ResourceType': 'instance', 'Tags': [ { 'Name': instance_name } ] } ],
                           'KeyName': 'xps13',
                           'MinCount': 1,
@@ -40,7 +40,7 @@ def create( paramaters ):
                           'InstanceInitiatedShutdownBehavior': 'stop'
                         }
 
-  instance_list = ec2.create_instances( **instance_paramaters )
+  instance_list = ec2.create_instances( **instance_parameters )
   if len( instance_list ) != 1:
     raise Exception( 'Tried to make 1 instance, got {0}'.format( len( instance_list ) ) )
 
@@ -67,8 +67,8 @@ def create( paramaters ):
   return { 'done': True, 'id': instance.id, 'interface_list': interface_list, 'ip_address_map': ip_address_map }
 
 
-def create_rollback( paramaters ):
-  instance_name = paramaters[ 'name' ]
+def create_rollback( parameters ):
+  instance_name = parameters[ 'name' ]
   logging.info( 'aws: rolling back instance "{0}"'.format( instance_name ) )
 
   raise Exception( 'aws rollback not implemented, yet' )
@@ -77,9 +77,9 @@ def create_rollback( paramaters ):
   return { 'rollback_done': True }
 
 
-def destroy( paramaters ):
-  instance_id = paramaters[ 'instance_id' ]
-  instance_name = paramaters[ 'name' ]
+def destroy( parameters ):
+  instance_id = parameters[ 'instance_id' ]
+  instance_name = parameters[ 'name' ]
   logging.info( 'aws: destroying instance "{0}"({1})'.format( instance_name, instance_id ) )
   ec2 = _connect()
   instance = ec2.Instance( instance_id )
@@ -106,10 +106,10 @@ def _power_state_convert( state ):
     return 'unknown "{0}"'.format( state )
 
 
-def set_power( paramaters ):
-  instance_id = paramaters[ 'instance_id' ]
-  instance_name = paramaters[ 'name' ]
-  desired_state = paramaters[ 'state' ]
+async def set_power( parameters ):
+  instance_id = parameters[ 'instance_id' ]
+  instance_name = parameters[ 'name' ]
+  desired_state = parameters[ 'state' ]
   logging.info( 'aws: setting power state of "{0}"({1}) to "{2}"...'.format( instance_name, instance_id, desired_state ) )
   ec2 = _connect()
   instance = ec2.Instance( instance_id )
@@ -129,7 +129,7 @@ def set_power( paramaters ):
 
   counter = 0
   while True:
-    asyncio.sleep( POLL_INTERVAL )
+    await asyncio.sleep( POLL_INTERVAL )
     instance = ec2.Instance( instance_id )
     if instance.state[ 'Name' ] == 'running':
       break
@@ -142,9 +142,9 @@ def set_power( paramaters ):
   return { 'state': _power_state_convert( instance.state ) }
 
 
-def power_state( paramaters ):
-  instance_id = paramaters[ 'instance_id' ]
-  instance_name = paramaters[ 'name' ]
+def power_state( parameters ):
+  instance_id = parameters[ 'instance_id' ]
+  instance_name = parameters[ 'name' ]
   logging.info( 'aws: getting "{0}"({1}) power state...'.format( instance_name, instance_id ) )
   ec2 = _connect()
   instance = ec2.Instance( instance_id )

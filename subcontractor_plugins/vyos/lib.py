@@ -37,11 +37,11 @@ def _send( host, auth_key, data ):
   return result
 
 
-def apply( paramaters ):
-  command_list = json.loads( paramaters[ 'command_list' ] )
-  logging.info( 'vyos: issuing "{0}" to "{1}"...'.format( command_list, paramaters[ 'host' ] ) )
+def apply( parameters ):
+  command_list = json.loads( parameters[ 'command_list' ] )
+  logging.info( 'vyos: issuing "{0}" to "{1}"...'.format( command_list, parameters[ 'host' ] ) )
   for command in command_list:
-    rc = _send( paramaters[ 'host' ], paramaters[ 'auth_key' ], { 'op': command[0], 'path': command[1] } )
+    rc = _send( parameters[ 'host' ], parameters[ 'auth_key' ], { 'op': command[0], 'path': command[1] } )
     if not rc[ 'success' ]:
       return { 'error': rc[ 'error' ] }
 

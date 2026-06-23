@@ -3,9 +3,9 @@ import docker
 
 
 # http://docker-py.readthedocs.io/en/1.10.0/api/
-def _connect( connection_paramaters ):
+def _connect( connection_parameters ):
   try:
-    host = connection_paramaters[ 'host' ]
+    host = connection_parameters[ 'host' ]
   except KeyError:
     raise ValueError( '\'host\' is required' )
 
@@ -14,31 +14,31 @@ def _connect( connection_paramaters ):
   return docker.DockerClient( base_url='tcp://{0}:2376'.format( host ) )
 
 
-def create( paramaters ):
-  container_name = paramaters[ 'name' ]
-  connection_paramaters = paramaters[ 'connection' ]
+def create( parameters ):
+  container_name = parameters[ 'name' ]
+  connection_parameters = parameters[ 'connection' ]
   logging.info( 'docker: creating container "{0}"'.format( container_name ) )
-  client = _connect( connection_paramaters )
+  client = _connect( connection_parameters )
 
-  logging.debug( 'docker: pulling "{0}"'.format( paramaters[ 'docker_image' ] ) )
+  logging.debug( 'docker: pulling "{0}"'.format( parameters[ 'docker_image' ] ) )
   try:
-    client.images.pull( paramaters[ 'docker_image' ] )
+    client.images.pull( parameters[ 'docker_image' ] )
   except Exception as e:
     raise Exception( 'Error Creating Container: {0}'.format( str( e ) ) )
 
-  container_paramaters = {
+  container_parameters = {
                           'auto_remove': False,
                           'detach': True,
-                          'image': paramaters[ 'docker_image' ],
+                          'image': parameters[ 'docker_image' ],
                           'name': container_name,
-                          'ports': paramaters[ 'port_map' ],
-                          'environment': paramaters[ 'environment_map' ],
-                          'command': paramaters[ 'command' ]
+                          'ports': parameters[ 'port_map' ],
+                          'environment': parameters[ 'environment_map' ],
+                          'command': parameters[ 'command' ]
                          }
 
-  logging.debug( 'docker: creating "{0}"'.format( container_paramaters ) )
+  logging.debug( 'docker: creating "{0}"'.format( container_parameters ) )
   try:
-    container = client.containers.create( **container_paramaters )
+    container = client.containers.create( **container_parameters )
   except Exception as e:
     raise Exception( 'Error Creating Container: {0}'.format( str( e ) ) )
 
@@ -48,25 +48,25 @@ def create( paramaters ):
   return { 'done': True, 'id': docker_id }
 
 
-def create_rollback( paramaters ):
-  container_name = paramaters[ 'name' ]
-  # connection_paramaters = paramaters[ 'connection' ]
+def create_rollback( parameters ):
+  container_name = parameters[ 'name' ]
+  # connection_parameters = parameters[ 'connection' ]
 
   logging.info( 'docker: rolling back container "{0}"'.format( container_name ) )
 
   raise Exception( 'docker rollback not implemented, yet' )
-  # client = _connect( connection_paramaters )
+  # client = _connect( connection_parameters )
 
   logging.info( 'docker: container "{0}" rolledback'.format( container_name ) )
   return { 'rollback_done': True }
 
 
-def destroy( paramaters ):
-  docker_id = paramaters[ 'docker_id' ]
-  connection_paramaters = paramaters[ 'connection' ]
-  container_name = paramaters[ 'name' ]
+def destroy( parameters ):
+  docker_id = parameters[ 'docker_id' ]
+  connection_parameters = parameters[ 'connection' ]
+  container_name = parameters[ 'name' ]
   logging.info( 'docker: destroying container "{0}"({1})'.format( container_name, docker_id ) )
-  client = _connect( connection_paramaters )
+  client = _connect( connection_parameters )
   try:
     container = client.containers.get( docker_id )
   except Exception as e:
@@ -93,13 +93,13 @@ def _power_state_convert( state ):
   #   return 'unknown "{0}"'.format( state )
 
 
-def start_stop( paramaters ):
-  docker_id = paramaters[ 'docker_id' ]
-  connection_paramaters = paramaters[ 'connection' ]
-  container_name = paramaters[ 'name' ]
-  desired_state = paramaters[ 'state' ]
+def start_stop( parameters ):
+  docker_id = parameters[ 'docker_id' ]
+  connection_parameters = parameters[ 'connection' ]
+  container_name = parameters[ 'name' ]
+  desired_state = parameters[ 'state' ]
   logging.info( 'docker: setting state of "{0}"({1}) to "{2}"...'.format( container_name, docker_id, desired_state ) )
-  client = _connect( connection_paramaters )
+  client = _connect( connection_parameters )
   try:
     container = client.containers.get( docker_id )
   except Exception as e:
@@ -128,12 +128,12 @@ def start_stop( paramaters ):
   return { 'state': desired_state }
 
 
-def state( paramaters ):
-  docker_id = paramaters[ 'docker_id' ]
-  connection_paramaters = paramaters[ 'connection' ]
-  container_name = paramaters[ 'name' ]
+def state( parameters ):
+  docker_id = parameters[ 'docker_id' ]
+  connection_parameters = parameters[ 'connection' ]
+  container_name = parameters[ 'name' ]
   logging.info( 'docker: getting "{0}"({1}) power state...'.format( container_name, docker_id ) )
-  client = _connect( connection_paramaters )
+  client = _connect( connection_parameters )
   try:
     container = client.containers.get( docker_id )
   except Exception as e:
