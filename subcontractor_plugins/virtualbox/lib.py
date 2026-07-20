@@ -172,12 +172,22 @@ async def create_rollback( parameters ):
       await asyncio.sleep( 1 )
 
   # make a list of files that needs to be cleaned up, just incase they are created an not attached, or vm wasn't registerd
-  file_list = [ vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties[ 'default_machine_folder' ] ) ]
+  settings_file = vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties[ 'default_machine_folder' ] )
+  file_list = [ settings_file ]
 
   for disk in vm_parameters[ 'disk_list' ]:
     disk_name = disk[ 'name' ]
     if 'file' not in disk:
-      file_list.append( '{0}/{1}.vdi'.format( os.path.dirname( file_list[0] ), disk_name ) )
+      location = '{0}/{1}.vdi'.format( os.path.dirname( settings_file ), disk_name )
+      medium = vbox.find_medium( location, constants.DeviceType.HardDisk )
+      if medium is not None:
+        logging.debug( 'virtualbox: rollback deleting medium "{0}"'.format( location ) )
+        progress = medium.delete_storage()
+        while not progress.completed:
+          await asyncio.sleep( 1 )
+
+      else:
+        file_list.append( location )
 
   logging.debug( 'virtualbox: rollback cleanup file list "{0}"'.format( file_list ) )
   for file_name in file_list:

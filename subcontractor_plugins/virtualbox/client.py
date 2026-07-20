@@ -4,6 +4,7 @@ import socket
 import re
 from urllib import request
 from functools import cached_property
+from subcontractor_plugins.virtualbox import constants
 
 VBOX_SOAP_BINDING = '{http://www.virtualbox.org/}vboxBinding'
 
@@ -121,6 +122,14 @@ class VirtualBox:
   def open_medium( self, path, device_type, access_mode, force_new_uuid ):
     return Medium( self.service, self.service.IVirtualBox_openMedium( self.handle, path, device_type, access_mode, force_new_uuid ) )
 
+  def find_medium( self, path, device_type ):
+    try:
+      return Medium( self.service, self.service.IVirtualBox_openMedium( self.handle, path, device_type, constants.AccessMode.ReadOnly, False ) )
+    except zeep.exceptions.Fault as e:
+      if error_rc( e ) == VBOX_E_OBJECT_NOT_FOUND:
+        return None
+      raise
+
   def create_medium( self, format, location, access_mode, device_type ):
     return Medium( self.service, self.service.IVirtualBox_createMedium( self.handle, format, location, access_mode, device_type ) )
 
@@ -233,6 +242,9 @@ class Medium:
 
   def create_base_storage( self, logical_size, variant_list ):
     return Progress( self.service, self.service.IMedium_createBaseStorage( self.handle, logical_size, variant_list ) )
+
+  def delete_storage( self ):
+    return Progress( self.service, self.service.IMedium_deleteStorage( self.handle ) )
 
 
 class GraphicsAdapter:
