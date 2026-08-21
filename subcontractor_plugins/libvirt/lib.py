@@ -11,8 +11,6 @@ import libvirt
 
 DISK_IMAGE_DIR = '/var/lib/libvirt/t3kton'
 
-ENABLE_VNC_CONSOLE = False
-
 
 def _connect( connection_parameters ):
   host = connection_parameters[ 'host' ]
@@ -79,18 +77,23 @@ def create( parameters ):
   for dev in vm_parameters[ 'boot_order' ]:
     boot_list.append( f'    <boot dev=\'{ dev }\'/>' )
 
+  console_type = vm_parameters.get( 'console_type', 'console' )
+  bios_extra = ''
+
   console = '''<console type='pty'/>
 '''
-  if ENABLE_VNC_CONSOLE:
-    console += '''    <graphics type='spice' port='5900' autoport='yes' listen='127.0.0.1'>
+  if console_type == 'spice':
+    console += '''    <graphics type='spice' autoport='yes' listen='127.0.0.1'>
       <listen type='address' address='127.0.0.1'/>
       <image compression='off'/>
+      <gl enable="no"/>
     </graphics>
     <video>
       <model type='qxl' ram='65536' vram='65536' vgamem='16384' heads='1' primary='yes'/>
-      <alias name='video0'/>
     </video>
 '''
+  else:
+    bios_extra = "useserial='yes'"
 
   vmxml = f'''<domain type='kvm'>
   <name>{ vm_name }</name>
@@ -112,7 +115,7 @@ def create( parameters ):
 { '\n'.join( boot_list ) }
     <bootmenu enable='yes' timeout='1000'/>
     <smbios mode='emulate'/>
-    <bios useserial='yes' rebootTimeout='0'/>
+    <bios { bios_extra } rebootTimeout='0'/>
   </os>
   <features>
     <acpi/>

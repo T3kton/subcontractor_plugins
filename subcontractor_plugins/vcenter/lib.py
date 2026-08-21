@@ -865,7 +865,7 @@ def power_state( parameters ):
     _disconnect( si )
 
 
-await def execute( parameters ):
+async def execute( parameters ):
   connection_parameters = parameters[ 'connection' ]
   vm_uuid = parameters[ 'uuid' ]
   vm_name = parameters[ 'name' ]

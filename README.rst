@@ -14,3 +14,14 @@ This way network segmentation can be maintained.  Each instance
 will need HTTP(s) which can be proxied back to contractor.
 
 see http://t3kton.github.io
+
+
+
+virtualbox
+----------
+
+start the web service::
+
+  vboxwebsrv -H 127.0.0.1
+
+
