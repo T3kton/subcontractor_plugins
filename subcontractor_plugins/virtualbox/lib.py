@@ -44,6 +44,9 @@ async def create( parameters ):
   settings_file = vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties[ 'default_machine_folder' ] )
   vm = vbox.create_machine( settings_file, vm_name, platform, CREATE_GROUPS, vm_parameters[ 'guest_type' ], CREATE_FLAGS )
   vm.memory_size = vm_parameters[ 'memory_size' ]  # in MiB
+  vm.cpu_count = vm_parameters[ 'cpu_count' ]
+  vm.firmware_settings.firmware_type = constants.FirmwareType.BIOS
+  vm.firmware_settings.time_offset = 0
 
   disk_controller_name = 'SCSI'
   vm.add_storage_controller( disk_controller_name, constants.StorageBus.SCSI )

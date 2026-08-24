@@ -176,10 +176,15 @@ class Machine:
   hardware_uuid = soap_property( 'IMachine', 'HardwareUUID' )
   settings_file_path = soap_property( 'IMachine', 'SettingsFilePath', True )
   memory_size = soap_property( 'IMachine', 'MemorySize' )
+  cpu_count = soap_property( 'IMachine', 'CPUCount' )
 
   def __init__( self, service, handle ):
     self.service = service
     self.handle = handle
+
+  @cached_property
+  def firmware_settings( self ):
+    return FirmwareSettings( self.service, self.service.IMachine_getFirmwareSettings( self.handle ) )
 
   def add_storage_controller( self, name, connection_type ):
     return self.service.IMachine_addStorageController( self.handle, name, connection_type )
@@ -250,6 +255,15 @@ class Medium:
 class GraphicsAdapter:
   graphics_controller_type = soap_property( 'IGraphicsAdapter', 'GraphicsControllerType' )
   video_memory_size = soap_property( 'IGraphicsAdapter', 'VRAMSize' )
+
+  def __init__( self, service, handle ):
+    self.service = service
+    self.handle = handle
+
+
+class FirmwareSettings:
+  firmware_type = soap_property( 'IFirmwareSettings', 'FirmwareType' )
+  time_offset = soap_property( 'IFirmwareSettings', 'TimeOffset' )
 
   def __init__( self, service, handle ):
     self.service = service
