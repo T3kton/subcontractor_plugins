@@ -1,5 +1,8 @@
 import socket
 import logging
+# pysnmp 4.4.12 smi/builder.py only does "import importlib", and falls back to the removed "imp" module (py3.12+) if importlib.util isn't already loaded
+import importlib.util  # noqa: F401
+import importlib.machinery  # noqa: F401
 from pysnmp import hlapi
 
 from subcontractor_plugins.iputils.pyping import ping as pyping
