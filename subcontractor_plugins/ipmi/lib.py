@@ -1,5 +1,5 @@
 import logging
-import time
+import asyncio
 import subprocess
 
 from subcontractor.credentials import getCredentials
@@ -39,17 +39,17 @@ def ignorable_errors( msg ):
 
 
 class IPMIClient():
-  def __init__( self, connection_paramaters ):
+  def __init__( self, connection_parameters ):
     super().__init__()
-    self.ip_address = connection_paramaters[ 'ip_address' ]
-    creds = connection_paramaters[ 'credentials' ]
+    self.ip_address = connection_parameters[ 'ip_address' ]
+    creds = connection_parameters[ 'credentials' ]
     if isinstance( creds, str ):
       creds = getCredentials( creds )
 
     self.username = creds[ 'username' ]
     self.password = creds[ 'password' ]
 
-  def _doCmd( self, cmd, retry_count ):
+  async def _doCmd( self, cmd, retry_count ):
     cmd = [ IPMITOOL_CMD, '-I', 'lanplus', '-H', self.ip_address, '-U', self.username, '-P', self.password, 'chassis', 'power', cmd ]
     debug_cmd = cmd.copy()
     debug_cmd[8] = '<password>'
@@ -67,7 +67,7 @@ class IPMIClient():
         raise Exception( 'Unknown or Non-Ignorable error "{0}", rc: "{1}"'.format( lines, proc.returncode ) )
 
       logging.warning( 'IPMI: got ignorable error "{0}", rc: "{1}"'.format( lines, proc.returncode ) )
-      time.sleep( IPMI_CMD_RETRY_DELAY )
+      await asyncio.sleep( IPMI_CMD_RETRY_DELAY )
 
     logging.warning( 'IPMI: Max retries, bailing' )
     raise Exception( 'Max retries' )
@@ -84,34 +84,34 @@ class IPMIClient():
     self._doCmd( state, retry_count )
 
 
-def link_test( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  scaler = paramaters[ 'scaler' ]
-  threshold = paramaters[ 'threshold' ]
-  delay = paramaters[ 'delay' ]
+async def link_test( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  scaler = parameters[ 'scaler' ]
+  threshold = parameters[ 'threshold' ]
+  delay = parameters[ 'delay' ]
   score = 1.0
 
-  logging.info( 'IPMI: link test on "{0}"...'.format( connection_paramaters[ 'ip_address' ] ) )
-  client = IPMIClient( connection_paramaters )
+  logging.info( 'IPMI: link test on "{0}"...'.format( connection_parameters[ 'ip_address' ] ) )
+  client = IPMIClient( connection_parameters )
 
-  for count in range( 0, paramaters[ 'count' ] ):
+  for count in range( 0, parameters[ 'count' ] ):
     score = score * scaler + ( 1 - scaler ) * ( 0 if client.getPower( 1 ) == 'error' else 1 )
     logging.debug( 'IPMI: link test score: "{0}"'.format( score ) )
 
     if score < threshold:
       return { 'score': score }
 
-    time.sleep( delay )
+    await asyncio.sleep( delay )
 
   return { 'score': score }
 
 
-def set_power( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  desired_state = paramaters[ 'state' ]
+async def set_power( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  desired_state = parameters[ 'state' ]
 
-  logging.info( 'IPMI: setting power state of "{0}" to "{1}"...'.format( connection_paramaters[ 'ip_address' ], desired_state ) )
-  client = IPMIClient( connection_paramaters )
+  logging.info( 'IPMI: setting power state of "{0}" to "{1}"...'.format( connection_parameters[ 'ip_address' ], desired_state ) )
+  client = IPMIClient( connection_parameters )
 
   curent_state = client.getPower( IPMI_CMD_MAX_RETRY )
 
@@ -123,19 +123,19 @@ def set_power( paramaters ):
 
   client.setPower( desired_state, IPMI_CMD_MAX_RETRY )
 
-  time.sleep( 5 )
+  await asyncio.sleep( 5 )
 
   curent_state = client.getPower( IPMI_CMD_MAX_RETRY )
-  logging.info( 'IPMI: setting power state of "{0}" to "{1}" complete'.format( connection_paramaters[ 'ip_address' ], desired_state ) )
+  logging.info( 'IPMI: setting power state of "{0}" to "{1}" complete'.format( connection_parameters[ 'ip_address' ], desired_state ) )
   return { 'state': curent_state }
 
 
-def power_state( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
+def power_state( parameters ):
+  connection_parameters = parameters[ 'connection' ]
 
-  logging.info( 'IPMI: getting power state of "{0}"...'.format( connection_paramaters[ 'ip_address' ] ) )
+  logging.info( 'IPMI: getting power state of "{0}"...'.format( connection_parameters[ 'ip_address' ] ) )
 
-  client = IPMIClient( connection_paramaters )
+  client = IPMIClient( connection_parameters )
 
   curent_state = client.getPower( IPMI_CMD_MAX_RETRY )
   return { 'state': curent_state }

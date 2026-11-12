@@ -10,14 +10,14 @@ def _command_shorten( command ):
   return ( command[ :50 ] + '..' ) if len( command ) > 50 else command
 
 
-def _connect( paramaters ):
+def _connect( parameters ):
   client = paramiko.SSHClient()
   client.set_missing_host_key_policy( paramiko.AutoAddPolicy() )
 
-  password = getCredentials( paramaters.get( 'password', None ) )
+  password = getCredentials( parameters.get( 'password', None ) )
   kwargs = {
-             'hostname': paramaters[ 'host' ],
-             'username': paramaters.get( 'username', None ),
+             'hostname': parameters[ 'host' ],
+             'username': parameters.get( 'username', None ),
              'password': password,
             }
 
@@ -26,22 +26,22 @@ def _connect( paramaters ):
   return client
 
 
-def execute( paramaters ):
-  command = paramaters[ 'command' ]
-  logging.info( 'ssh: executing "{0}" on "{1}"...'.format( _command_shorten( command ), paramaters[ 'host' ] ) )
+def execute( parameters ):
+  command = parameters[ 'command' ]
+  logging.info( 'ssh: executing "{0}" on "{1}"...'.format( _command_shorten( command ), parameters[ 'host' ] ) )
 
-  client = _connect( paramaters )
+  client = _connect( parameters )
   try:
     transport = client.get_transport()
     session = transport.open_channel( 'session' )
     session.set_combine_stderr( True )
     session.exec_command( command )
 
-    finish_by = timedelta( seconds=paramaters[ 'timeout' ] ) + datetime.utcnow()
+    finish_by = timedelta( seconds=parameters[ 'timeout' ] ) + datetime.utcnow()
     while not session.exit_status_ready():
       buff = session.recv( 4096 )
       if buff:
-        logging.debug( 'ssh: executing "{0}" on "{1}":"{2}"'.format( _command_shorten( command ), paramaters[ 'host' ], buff ) )
+        logging.debug( 'ssh: executing "{0}" on "{1}":"{2}"'.format( _command_shorten( command ), parameters[ 'host' ], buff ) )
       if datetime.utcnow() > finish_by:
         raise Exception( 'timeout waiting for command to finish' )
 
@@ -50,7 +50,7 @@ def execute( paramaters ):
   finally:
     client.close()
 
-  logging.info( 'ssh: execed "{0}" on "{1}" rc: "{2}"'.format( _command_shorten( command ), paramaters[ 'host' ], rc ) )
+  logging.info( 'ssh: execed "{0}" on "{1}" rc: "{2}"'.format( _command_shorten( command ), parameters[ 'host' ], rc ) )
   return { 'rc': rc }
 
 
@@ -58,17 +58,17 @@ def _file_cb( sent, total ):
   logging.debug( 'ssh: transfer sent "{0}" of "{1}"'.format( sent, total ) )
 
 
-def file( paramaters ):
-  source = paramaters[ 'source' ]
-  logging.info( 'ssh: transfering "{0}"-"{1}" to "{2}"...'.format( source, paramaters[ 'destination' ], paramaters[ 'host' ] ) )
+def file( parameters ):
+  source = parameters[ 'source' ]
+  logging.info( 'ssh: transfering "{0}"-"{1}" to "{2}"...'.format( source, parameters[ 'destination' ], parameters[ 'host' ] ) )
 
-  logging.debug( 'ssh: retreiving "{0}"'.format( paramaters[ 'destination' ] ) )
+  logging.debug( 'ssh: retreiving "{0}"'.format( parameters[ 'destination' ] ) )
   local_file = file_reader( source, None )
 
-  client = _connect( paramaters )
+  client = _connect( parameters )
   try:
     sftp = client.open_sftp()
-    sftp.putfo( local_file, paramaters[ 'destination' ], callback=_file_cb )
+    sftp.putfo( local_file, parameters[ 'destination' ], callback=_file_cb )
     sftp.close()
 
   finally:

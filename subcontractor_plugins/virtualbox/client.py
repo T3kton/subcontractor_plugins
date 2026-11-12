@@ -4,6 +4,7 @@ import socket
 import re
 from urllib import request
 from functools import cached_property
+from subcontractor_plugins.virtualbox import constants
 
 VBOX_SOAP_BINDING = '{http://www.virtualbox.org/}vboxBinding'
 
@@ -121,6 +122,14 @@ class VirtualBox:
   def open_medium( self, path, device_type, access_mode, force_new_uuid ):
     return Medium( self.service, self.service.IVirtualBox_openMedium( self.handle, path, device_type, access_mode, force_new_uuid ) )
 
+  def find_medium( self, path, device_type ):
+    try:
+      return Medium( self.service, self.service.IVirtualBox_openMedium( self.handle, path, device_type, constants.AccessMode.ReadOnly, False ) )
+    except zeep.exceptions.Fault as e:
+      if error_rc( e ) == VBOX_E_OBJECT_NOT_FOUND:
+        return None
+      raise
+
   def create_medium( self, format, location, access_mode, device_type ):
     return Medium( self.service, self.service.IVirtualBox_createMedium( self.handle, format, location, access_mode, device_type ) )
 
@@ -167,10 +176,15 @@ class Machine:
   hardware_uuid = soap_property( 'IMachine', 'HardwareUUID' )
   settings_file_path = soap_property( 'IMachine', 'SettingsFilePath', True )
   memory_size = soap_property( 'IMachine', 'MemorySize' )
+  cpu_count = soap_property( 'IMachine', 'CPUCount' )
 
   def __init__( self, service, handle ):
     self.service = service
     self.handle = handle
+
+  @cached_property
+  def firmware_settings( self ):
+    return FirmwareSettings( self.service, self.service.IMachine_getFirmwareSettings( self.handle ) )
 
   def add_storage_controller( self, name, connection_type ):
     return self.service.IMachine_addStorageController( self.handle, name, connection_type )
@@ -234,10 +248,22 @@ class Medium:
   def create_base_storage( self, logical_size, variant_list ):
     return Progress( self.service, self.service.IMedium_createBaseStorage( self.handle, logical_size, variant_list ) )
 
+  def delete_storage( self ):
+    return Progress( self.service, self.service.IMedium_deleteStorage( self.handle ) )
+
 
 class GraphicsAdapter:
   graphics_controller_type = soap_property( 'IGraphicsAdapter', 'GraphicsControllerType' )
   video_memory_size = soap_property( 'IGraphicsAdapter', 'VRAMSize' )
+
+  def __init__( self, service, handle ):
+    self.service = service
+    self.handle = handle
+
+
+class FirmwareSettings:
+  firmware_type = soap_property( 'IFirmwareSettings', 'FirmwareType' )
+  time_offset = soap_property( 'IFirmwareSettings', 'TimeOffset' )
 
   def __init__( self, service, handle ):
     self.service = service

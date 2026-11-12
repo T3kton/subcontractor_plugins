@@ -44,26 +44,26 @@ class AzureClient():
     return self._network
 
 
-def _connect( connection_paramaters ):
-  logging.debug( 'azure: connecting with client_id "{0}", tenant_id: "{1}"'.format( connection_paramaters[ 'client_id' ], connection_paramaters[ 'tenant_id' ] ) )
-  password = getCredentials( connection_paramaters[ 'password' ] )
+def _connect( connection_parameters ):
+  logging.debug( 'azure: connecting with client_id "{0}", tenant_id: "{1}"'.format( connection_parameters[ 'client_id' ], connection_parameters[ 'tenant_id' ] ) )
+  password = getCredentials( connection_parameters[ 'password' ] )
 
-  credentials = ServicePrincipalCredentials( client_id=connection_paramaters[ 'client_id' ], secret=password, tenant=connection_paramaters[ 'tenant_id' ] )
+  credentials = ServicePrincipalCredentials( client_id=connection_parameters[ 'client_id' ], secret=password, tenant=connection_parameters[ 'tenant_id' ] )
 
-  return AzureClient( credentials, connection_paramaters[ 'subscription_id' ] )
+  return AzureClient( credentials, connection_parameters[ 'subscription_id' ] )
 
 
-def create( paramaters ):
-  vm_paramaters = paramaters[ 'vm' ]
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_name = vm_paramaters[ 'name' ]
-  resource_group = paramaters[ 'resource_group' ]
-  location = paramaters[ 'location' ]
+def create( parameters ):
+  vm_parameters = parameters[ 'vm' ]
+  connection_parameters = parameters[ 'connection' ]
+  vm_name = vm_parameters[ 'name' ]
+  resource_group = parameters[ 'resource_group' ]
+  location = parameters[ 'location' ]
 
   logging.info( 'azure: creating vm "{0}" in "{1}"'.format( vm_name, resource_group ) )
-  client = _connect( connection_paramaters )
+  client = _connect( connection_parameters )
 
-  if 'image' not in vm_paramaters and 'disk_os' not in vm_paramaters:
+  if 'image' not in vm_parameters and 'disk_os' not in vm_parameters:
     raise ValueError( 'image and/or disk_os need to be defined' )
 
   try:
@@ -79,8 +79,8 @@ def create( paramaters ):
   # client.resource.create_or_update( resource_group, { 'location': location } )
 
   nic_list = []
-  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
-    interface = vm_paramaters[ 'interface_list' ][ i ]
+  for i in range( 0, len( vm_parameters[ 'interface_list' ] ) ):
+    interface = vm_parameters[ 'interface_list' ][ i ]
     subnet = client.network.subnets.get( resource_group, interface[ 'network' ], 'default' )
     ip_config_list = []
     for config in interface[ 'config_list' ]:
@@ -115,8 +115,8 @@ def create( paramaters ):
     nic_list.append( { 'id': nic.id, 'properties': { 'primary': len( nic_list ) == 0 } } )
 
   storage_spec = {}
-  if 'image' in vm_paramaters:
-    image = vm_paramaters[ 'image' ]
+  if 'image' in vm_parameters:
+    image = vm_parameters[ 'image' ]
     storage_spec[ 'image_reference' ] = {
                                             'publisher': image[ 'publisher' ],
                                             'offer': image[ 'offer' ],
@@ -124,22 +124,22 @@ def create( paramaters ):
                                             'version': image[ 'version' ]
                                         }
 
-  for disk in vm_paramaters.get( 'disk_data_list', [] ):
+  for disk in vm_parameters.get( 'disk_data_list', [] ):
     pass  # TODO
 
-  if 'disk_os' in vm_paramaters:
+  if 'disk_os' in vm_parameters:
     pass  # TODO
 
   vm_spec = {
               'location': location,
               'os_profile': {
                               'computer_name': vm_name,
-                              'admin_username': vm_paramaters[ 'admin' ][ 'username' ],
-                              'admin_password': vm_paramaters[ 'admin' ][ 'password' ]
+                              'admin_username': vm_parameters[ 'admin' ][ 'username' ],
+                              'admin_password': vm_parameters[ 'admin' ][ 'password' ]
                             },
               'hardware_profile':
               {
-                  'vm_size': vm_paramaters[ 'size' ]
+                  'vm_size': vm_parameters[ 'size' ]
               },
               'storage_profile': storage_spec,
               'network_profile': { 'network_interfaces': nic_list }
@@ -156,8 +156,8 @@ def create( paramaters ):
   return { 'done': True, 'resource_name': vm.id.split( '/' )[ -1 ] }
 
 
-def create_rollback( paramaters ):
-  instance_name = paramaters[ 'name' ]
+def create_rollback( parameters ):
+  instance_name = parameters[ 'name' ]
   logging.info( 'azure: rolling back instance "{0}"'.format( instance_name ) )
 
   raise Exception( 'azure rollback not implemented, yet' )
@@ -166,13 +166,13 @@ def create_rollback( paramaters ):
   return { 'rollback_done': True }
 
 
-def destroy( paramaters ):
-  resource_group = paramaters[ 'resource_group' ]
-  resource_name = paramaters[ 'resource_name' ]
-  connection_paramaters = paramaters[ 'connection' ]
+def destroy( parameters ):
+  resource_group = parameters[ 'resource_group' ]
+  resource_name = parameters[ 'resource_name' ]
+  connection_parameters = parameters[ 'connection' ]
 
   logging.info( 'azure: destroying vm "{0}" in "{1}"'.format( resource_name, resource_group ) )
-  client = _connect( connection_paramaters )
+  client = _connect( connection_parameters )
 
   vm = client.compute.virtual_machines.get( resource_group, resource_name )
 
@@ -226,14 +226,14 @@ def _power_state_convert( instance_view ):
     return 'unknown "{0}"'.format( code )
 
 
-def set_power( paramaters ):
-  resource_group = paramaters[ 'resource_group' ]
-  resource_name = paramaters[ 'resource_name' ]
-  connection_paramaters = paramaters[ 'connection' ]
-  desired_state = paramaters[ 'state' ]
+def set_power( parameters ):
+  resource_group = parameters[ 'resource_group' ]
+  resource_name = parameters[ 'resource_name' ]
+  connection_parameters = parameters[ 'connection' ]
+  desired_state = parameters[ 'state' ]
 
   logging.info( 'azure: setting power state of "{0}" in "{1}" to "{2}"'.format( resource_name, resource_group, desired_state ) )
-  client = _connect( connection_paramaters )
+  client = _connect( connection_parameters )
 
   curent_state = _power_state_convert( client.compute.virtual_machines.instance_view( resource_group, resource_name ) )
   if curent_state == desired_state or ( curent_state == 'off' and desired_state == 'soft_off' ):
@@ -252,12 +252,12 @@ def set_power( paramaters ):
   return { 'state': _power_state_convert( client.compute.virtual_machines.instance_view( resource_group, resource_name ) ) }
 
 
-def power_state( paramaters ):
-  resource_group = paramaters[ 'resource_group' ]
-  resource_name = paramaters[ 'resource_name' ]
-  connection_paramaters = paramaters[ 'connection' ]
+def power_state( parameters ):
+  resource_group = parameters[ 'resource_group' ]
+  resource_name = parameters[ 'resource_name' ]
+  connection_parameters = parameters[ 'connection' ]
 
   logging.info( 'aws: get power state of "{0}" in "{1}"...'.format( resource_name, resource_group ) )
-  client = _connect( connection_paramaters )
+  client = _connect( connection_parameters )
 
   return { 'state': _power_state_convert( client.compute.virtual_machines.instance_view( resource_group, resource_name ) ) }

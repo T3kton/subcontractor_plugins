@@ -11,33 +11,31 @@ import libvirt
 
 DISK_IMAGE_DIR = '/var/lib/libvirt/t3kton'
 
-ENABLE_VNC_CONSOLE = False
 
-
-def _connect( connection_paramaters ):
-  host = connection_paramaters[ 'host' ]
+def _connect( connection_parameters ):
+  host = connection_parameters[ 'host' ]
   logging.debug( 'libvirt: connecting to "{0}"'.format( host ) )
 
   return libvirt.open()  # 'qemu://{0}/system'.format( host ) )
 
 
-def create( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_paramaters = paramaters[ 'vm' ]
-  vm_name = vm_paramaters[ 'name' ]
+def create( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_parameters = parameters[ 'vm' ]
+  vm_name = vm_parameters[ 'name' ]
 
   # generic static mac are 52:54:00:00:00:00 -> 52:54:00:FF:FF:FF
-  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
+  for i in range( 0, len( vm_parameters[ 'interface_list' ] ) ):
     mac = '525400{0:06x}'.format( random.randint( 0, 16777215 ) )  # TODO: check to see if the mac is allready in use, also make them sequential
-    vm_paramaters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
+    vm_parameters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
 
   logging.info( 'libvirt: creating vm "{0}"'.format( vm_name ) )
-  lvirt = _connect( connection_paramaters )
+  lvirt = _connect( connection_parameters )
 
   vm_disk_dir = os.path.join( DISK_IMAGE_DIR, vm_name )
   os.mkdir( vm_disk_dir )
   disk_list = []
-  for disk in vm_paramaters[ 'disk_list' ]:
+  for disk in vm_parameters[ 'disk_list' ]:
     disk_name = disk[ 'name' ]
     logging.debug( 'libvirt: creating disk "{0}" on "{1}"'.format( disk_name, vm_name ) )
     if 'file' in disk:
@@ -65,7 +63,7 @@ def create( paramaters ):
     </disk>''' )
 
   interface_list = []
-  for interface in vm_paramaters[ 'interface_list' ]:
+  for interface in vm_parameters[ 'interface_list' ]:
     # for a list of supported models: qemu-system-x86_64 -net nic,model=?
     interface_list.append( f'''
       <interface type='bridge'>
@@ -76,27 +74,32 @@ def create( paramaters ):
       </interface>''')
 
   boot_list = []
-  for dev in vm_paramaters[ 'boot_order' ]:
+  for dev in vm_parameters[ 'boot_order' ]:
     boot_list.append( f'    <boot dev=\'{ dev }\'/>' )
+
+  console_type = vm_parameters.get( 'console_type', 'console' )
+  bios_extra = ''
 
   console = '''<console type='pty'/>
 '''
-  if ENABLE_VNC_CONSOLE:
-    console += '''    <graphics type='spice' port='5900' autoport='yes' listen='127.0.0.1'>
+  if console_type == 'spice':
+    console += '''    <graphics type='spice' autoport='yes' listen='127.0.0.1'>
       <listen type='address' address='127.0.0.1'/>
       <image compression='off'/>
+      <gl enable="no"/>
     </graphics>
     <video>
       <model type='qxl' ram='65536' vram='65536' vgamem='16384' heads='1' primary='yes'/>
-      <alias name='video0'/>
     </video>
 '''
+  else:
+    bios_extra = "useserial='yes'"
 
   vmxml = f'''<domain type='kvm'>
   <name>{ vm_name }</name>
   <title>{ vm_name }</title>
-  <memory unit='Mib'>{ vm_paramaters[ 'memory_size' ] }</memory>
-  <vcpu>{ vm_paramaters[ 'cpu_count' ] }</vcpu>
+  <memory unit='Mib'>{ vm_parameters[ 'memory_size' ] }</memory>
+  <vcpu>{ vm_parameters[ 'cpu_count' ] }</vcpu>
   <cpu mode="host-passthrough" check="none" migratable="on"/>
   <clock offset='utc'>
     <timer name='rtc' tickpolicy='catchup'/>
@@ -112,7 +115,7 @@ def create( paramaters ):
 { '\n'.join( boot_list ) }
     <bootmenu enable='yes' timeout='1000'/>
     <smbios mode='emulate'/>
-    <bios useserial='yes' rebootTimeout='0'/>
+    <bios { bios_extra } rebootTimeout='0'/>
   </os>
   <features>
     <acpi/>
@@ -135,12 +138,12 @@ def create( paramaters ):
   return { 'done': True, 'uuid': domain.UUIDString() }
 
 
-def create_rollback( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_paramaters = paramaters[ 'vm' ]
-  vm_name = vm_paramaters[ 'name' ]
+def create_rollback( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_parameters = parameters[ 'vm' ]
+  vm_name = vm_parameters[ 'name' ]
   logging.info( 'libvirt: rolling back vm "{0}"'.format( vm_name ) )
-  lvirt = _connect( connection_paramaters )
+  lvirt = _connect( connection_parameters )
 
   try:
     domain = lvirt.lookupByName( vm_name )
@@ -154,7 +157,7 @@ def create_rollback( paramaters ):
       pass
 
   vm_disk_dir = os.path.join( DISK_IMAGE_DIR, vm_name )
-  for disk in vm_paramaters[ 'disk_list' ]:
+  for disk in vm_parameters[ 'disk_list' ]:
     disk_name = disk[ 'name' ]
     logging.debug( 'libvirt: rollback remove disk "{0}"'.format( disk_name ) )
     try:
@@ -169,12 +172,12 @@ def create_rollback( paramaters ):
   return { 'rollback_done': True }
 
 
-def destroy( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
+def destroy( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
   logging.info( 'libvirt: destroying vm "{0}"({1})'.format( vm_name, vm_uuid ) )
-  lvirt = _connect( connection_paramaters )
+  lvirt = _connect( connection_parameters )
 
   try:
     domain = lvirt.lookupByUUIDString( vm_uuid )
@@ -194,13 +197,13 @@ def destroy( paramaters ):
   return { 'done': True }
 
 
-def get_interface_map( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
+def get_interface_map( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
   interface_list = []
   logging.info( 'libvirt: getting interface map "{0}"({1})'.format( vm_name, vm_uuid ) )
-  lvirt = _connect( connection_paramaters )
+  lvirt = _connect( connection_parameters )
 
   domain = lvirt.lookupByUUIDString( vm_uuid )
   root = ElementTree.fromstring( domain.XMLDesc( libvirt.VIR_DOMAIN_XML_SECURE ) )
@@ -223,13 +226,13 @@ def _power_state_convert( state ):
     return 'unknown "{0}"'.format( state )
 
 
-def set_power( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
-  desired_state = paramaters[ 'state' ]
+def set_power( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
+  desired_state = parameters[ 'state' ]
   logging.info( 'libvirt: setting power state of "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, desired_state ) )
-  lvirt = _connect( connection_paramaters )
+  lvirt = _connect( connection_parameters )
 
   domain = lvirt.lookupByUUIDString( vm_uuid )
 
@@ -253,12 +256,12 @@ def set_power( paramaters ):
   return { 'state': _power_state_convert( domain.state() ) }
 
 
-def power_state( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
+def power_state( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
   logging.info( 'libvirt: getting "{0}"({1}) power state...'.format( vm_name, vm_uuid ) )
-  lvirt = _connect( connection_paramaters )
+  lvirt = _connect( connection_parameters )
 
   domain = lvirt.lookupByUUIDString( vm_uuid )
 

@@ -118,3 +118,11 @@ class GraphicsControllerType:
   VMSVGA = 'VMSVGA'  # 2
   VBoxSVGA = 'VBoxSVGA'  # 3
   QemuRamFB = 'QemuRamFB'  # 3
+
+
+class FirmwareType:
+  BIOS = 'BIOS'  # 1
+  EFI = 'EFI'  # 2
+  EFI32 = 'EFI32'  # 3
+  EFI64 = 'EFI64'  # 4
+  EFIDUAL = 'EFIDUAL'  # 5

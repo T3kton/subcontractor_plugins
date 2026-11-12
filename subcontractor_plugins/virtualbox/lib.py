@@ -16,34 +16,37 @@ BOOT_ORDER_MAP = { 'hdd': constants.DeviceType.HardDisk, 'net': constants.Device
 FRONTEND = 'gui'  # or 'headless' or 'sdl'
 
 
-def _connect( connection_paramaters ):
-  creds = connection_paramaters[ 'credentials' ]
+def _connect( connection_parameters ):
+  creds = connection_parameters[ 'credentials' ]
   if isinstance( creds, str ):
     creds = getCredentials( creds )
 
-  logging.debug( 'virtualbox: connecting to "{0}" with user "{1}"'.format( connection_paramaters[ 'host' ], creds[ 'username' ] ) )
+  logging.debug( 'virtualbox: connecting to "{0}" with user "{1}"'.format( connection_parameters[ 'host' ], creds[ 'username' ] ) )
 
-  return VirtualBox( 'http://{0}:18083/'.format( connection_paramaters[ 'host' ] ), creds[ 'username' ], creds[ 'password' ] )
+  return VirtualBox( 'http://{0}:18083/'.format( connection_parameters[ 'host' ] ), creds[ 'username' ], creds[ 'password' ] )
 
 
-def create( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_paramaters = paramaters[ 'vm' ]
-  vm_name = vm_paramaters[ 'name' ]
+async def create( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_parameters = parameters[ 'vm' ]
+  vm_name = vm_parameters[ 'name' ]
 
   platform = 'x86'
 
   # virtualbox static mac are 08:00:27:00:00:00 -> 08:00:27:FF:FF:FF
-  for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
+  for i in range( 0, len( vm_parameters[ 'interface_list' ] ) ):
     mac = '080027{0:06x}'.format( random.randint( 0, 16777215 ) )  # TODO: check to see if the mac is allready in use, also make them sequential
-    vm_paramaters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
+    vm_parameters[ 'interface_list' ][ i ][ 'mac' ] = ':'.join( mac[ x:x + 2 ] for x in range( 0, 12, 2 ) )
 
   logging.info( 'virtualbox: creating vm "{0}"'.format( vm_name ) )
-  vbox = _connect( connection_paramaters )
+  vbox = _connect( connection_parameters )
 
   settings_file = vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties[ 'default_machine_folder' ] )
-  vm = vbox.create_machine( settings_file, vm_name, platform, CREATE_GROUPS, vm_paramaters[ 'guest_type' ], CREATE_FLAGS )
-  vm.memory_size = vm_paramaters[ 'memory_size' ]  # in MiB
+  vm = vbox.create_machine( settings_file, vm_name, platform, CREATE_GROUPS, vm_parameters[ 'guest_type' ], CREATE_FLAGS )
+  vm.memory_size = vm_parameters[ 'memory_size' ]  # in MiB
+  vm.cpu_count = vm_parameters[ 'cpu_count' ]
+  vm.firmware_settings.firmware_type = constants.FirmwareType.BIOS
+  vm.firmware_settings.time_offset = 0
 
   disk_controller_name = 'SCSI'
   vm.add_storage_controller( disk_controller_name, constants.StorageBus.SCSI )
@@ -71,7 +74,7 @@ def create( paramaters ):
 
     disk_port = 0
     cd_port = 0
-    for disk in vm_paramaters[ 'disk_list' ]:
+    for disk in vm_parameters[ 'disk_list' ]:
       disk_name = disk[ 'name' ]
       logging.debug( 'vritualbox: creating disk "{0}" on "{1}"'.format( disk_name, vm_name ) )
       if 'file' in disk:
@@ -95,7 +98,7 @@ def create( paramaters ):
         progress = medium.create_base_storage( disk_size, [ constants.MediumVariant.Standard ] )
         while not progress.completed:
           logging.debug( 'virtualbox: creating storage for "{0}" disk "{1}" at {2}%, {3} seconds left'.format( vm_name, disk_name, progress.percent, progress.time_remaining ) )
-          asyncio.sleep( 1 )
+          await asyncio.sleep( 1 )
 
         if medium.state != constants.MediumState.Created:
           raise Exception( 'disk "{0}" for vm "{1}" faild to create: "{2}"'.format( disk_name, vm_name, progress.error_info[ 'text' ] ) )
@@ -103,8 +106,8 @@ def create( paramaters ):
         vm2.attach_device( disk_controller_name, disk_port, 0, constants.DeviceType.HardDisk, medium )
         disk_port += 1
 
-    for i in range( 0, len( vm_paramaters[ 'interface_list' ] ) ):
-      interface = vm_paramaters[ 'interface_list' ][ i ]
+    for i in range( 0, len( vm_parameters[ 'interface_list' ] ) ):
+      interface = vm_parameters[ 'interface_list' ][ i ]
       adapter = vm2.get_network_adapter( interface[ 'index' ] )
 
       try:
@@ -136,11 +139,11 @@ def create( paramaters ):
         raise Exception( 'Unknown interface type "{0}"'.format( interface[ 'type' ] ) )
 
     for i in range( 0, vbox.platform_properties[ 'max_boot_position' ] ):
-      if i < len( vm_paramaters[ 'boot_order' ] ):
+      if i < len( vm_parameters[ 'boot_order' ] ):
         try:
-          vm2.set_boot_order( i + 1, BOOT_ORDER_MAP[ vm_paramaters[ 'boot_order' ][ i ] ] )
+          vm2.set_boot_order( i + 1, BOOT_ORDER_MAP[ vm_parameters[ 'boot_order' ][ i ] ] )
         except KeyError:
-          raise Exception( 'Unknown boot item "{0}"'.format( vm_paramaters[ 'boot_order' ][ i ] ) )
+          raise Exception( 'Unknown boot item "{0}"'.format( vm_parameters[ 'boot_order' ][ i ] ) )
 
     vm2.save_settings()
 
@@ -152,12 +155,12 @@ def create( paramaters ):
   return { 'done': True, 'uuid': vm.hardware_uuid }
 
 
-def create_rollback( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_paramaters = paramaters[ 'vm' ]
-  vm_name = vm_paramaters[ 'name' ]
+async def create_rollback( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_parameters = parameters[ 'vm' ]
+  vm_name = vm_parameters[ 'name' ]
   logging.info( 'virtualbox: rolling back vm "{0}"'.format( vm_name ) )
-  vbox = _connect( connection_paramaters )
+  vbox = _connect( connection_parameters )
 
   try:
     vm = vbox.find_machine( vm_name )
@@ -169,15 +172,25 @@ def create_rollback( paramaters ):
     progress = vm.delete_config( media )
     while not progress.completed:
       logging.debug( 'virtualbox: deleting config "{0}" power off at {1}%, {2} seconds left'.format( vm_name, progress.percent, progress.time_remaining ) )
-      asyncio.sleep( 1 )
+      await asyncio.sleep( 1 )
 
   # make a list of files that needs to be cleaned up, just incase they are created an not attached, or vm wasn't registerd
-  file_list = [ vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties[ 'default_machine_folder' ] ) ]
+  settings_file = vbox.compose_machine_filename( vm_name, CREATE_GROUP, CREATE_FLAGS, vbox.system_properties[ 'default_machine_folder' ] )
+  file_list = [ settings_file ]
 
-  for disk in vm_paramaters[ 'disk_list' ]:
+  for disk in vm_parameters[ 'disk_list' ]:
     disk_name = disk[ 'name' ]
     if 'file' not in disk:
-      file_list.append( '{0}/{1}.vdi'.format( os.path.dirname( file_list[0] ), disk_name ) )
+      location = '{0}/{1}.vdi'.format( os.path.dirname( settings_file ), disk_name )
+      medium = vbox.find_medium( location, constants.DeviceType.HardDisk )
+      if medium is not None:
+        logging.debug( 'virtualbox: rollback deleting medium "{0}"'.format( location ) )
+        progress = medium.delete_storage()
+        while not progress.completed:
+          await asyncio.sleep( 1 )
+
+      else:
+        file_list.append( location )
 
   logging.debug( 'virtualbox: rollback cleanup file list "{0}"'.format( file_list ) )
   for file_name in file_list:
@@ -195,12 +208,12 @@ def create_rollback( paramaters ):
   return { 'rollback_done': True }
 
 
-def destroy( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
+async def destroy( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
   logging.info( 'virtualbox: destroying vm "{0}"({1})'.format( vm_name, vm_uuid ) )
-  vbox = _connect( connection_paramaters )
+  vbox = _connect( connection_parameters )
 
   try:
     vm = vbox.find_machine( vm_uuid )
@@ -211,19 +224,19 @@ def destroy( paramaters ):
   progress = vm.delete_config( media )
   while not progress.completed:
     logging.debug( 'virtualbox: deleting config "{0}"({1}) at {2}%, {3} seconds left'.format( vm_name, vm_uuid, progress.percent, progress.time_remaining ) )
-    asyncio.sleep( 1 )
+    await asyncio.sleep( 1 )
 
   logging.info( 'virtualbox: vm "{0}" destroyed'.format( vm_name ) )
   return { 'done': True }
 
 
-def get_interface_map( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
+def get_interface_map( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
   interface_list = []
   logging.info( 'virtualbox: getting interface map "{0}"({1})'.format( vm_name, vm_uuid ) )
-  vbox = _connect( connection_paramaters )
+  vbox = _connect( connection_parameters )
 
   vm = vbox.find_machine( vm_name )
 
@@ -248,13 +261,13 @@ def _power_state_convert( state ):
     return 'unknown "{0}"'.format( state )
 
 
-async def set_power( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
-  desired_state = paramaters[ 'state' ]
+async def set_power( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
+  desired_state = parameters[ 'state' ]
   logging.info( 'virtualbox: setting power state of "{0}"({1}) to "{2}"...'.format( vm_name, vm_uuid, desired_state ) )
-  vbox = _connect( connection_paramaters )
+  vbox = _connect( connection_parameters )
 
   vm = vbox.find_machine( vm_name )
 
@@ -292,12 +305,12 @@ async def set_power( paramaters ):
   return { 'state': _power_state_convert( vm.state ) }
 
 
-def power_state( paramaters ):
-  connection_paramaters = paramaters[ 'connection' ]
-  vm_uuid = paramaters[ 'uuid' ]
-  vm_name = paramaters[ 'name' ]
+def power_state( parameters ):
+  connection_parameters = parameters[ 'connection' ]
+  vm_uuid = parameters[ 'uuid' ]
+  vm_name = parameters[ 'name' ]
   logging.info( 'virtualbox: getting "{0}"({1}) power state...'.format( vm_name, vm_uuid ) )
-  vbox = _connect( connection_paramaters )
+  vbox = _connect( connection_parameters )
 
   vm = vbox.find_machine( vm_uuid )
 
